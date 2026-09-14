@@ -1,6 +1,6 @@
 # AI IC Design Verification Flow
 
-Two complementary Codex skills for building AI-native chip design and verification repositories and running reproducible Synopsys EDA workflows.
+Three complementary Codex skills for building AI-native chip design and verification repositories, writing concise repository instructions, and running reproducible Synopsys EDA workflows.
 
 ## Skills
 
@@ -24,6 +24,16 @@ Example:
 Use $eda-tool-engineering to inspect this project's eda.yaml, validate the environment, and create a dry-run simulation plan.
 ```
 
+### `write-agents-md`
+
+Inspect a repository and create or update a concise, evidence-based `AGENTS.md` (80–120 lines, maximum 150) covering sources of truth, paths, commands, modification boundaries, debugging policy, and definition of done.
+
+Example:
+
+```text
+Use $write-agents-md to inspect this repository and create an actionable AGENTS.md under 150 lines.
+```
+
 The two skills work together: `organize-chip-project` establishes the repository's knowledge and execution surfaces, while `eda-tool-engineering` supplies the reproducible EDA execution layer. When an organized project contains `eda.yaml`, the organizer directs the agent to use the EDA skill rather than creating a competing flow.
 
 ## Install
@@ -33,6 +43,7 @@ Copy or symlink the skill directories into `${CODEX_HOME:-$HOME/.codex}/skills/`
 ```text
 skills/eda-tool-engineering
 skills/organize-chip-project
+skills/write-agents-md
 ```
 
 Restart or reload Codex skill discovery if the new skills are not visible immediately.
