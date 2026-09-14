@@ -36,7 +36,7 @@ Before a physical move, record one row per artifact or dependency-closed group:
 | Original path | Role/canonical status | Proposed action/path | Known consumers | Required updates | Validation | Result |
 |---|---|---|---|---|---|---|
 
-Use `retain/index` as a valid action. A clean AI-native overlay is often safer and more useful than a large rename.
+For a user-requested physical reorganization, use only `move`, `retain_protected`, or `compatibility_shim`; see [physical-migration.md](physical-migration.md). `retain/index` is valid only for onboarding-only work, not as a substitute for a requested directory migration.
 
 ## Baseline and equivalence matrix
 

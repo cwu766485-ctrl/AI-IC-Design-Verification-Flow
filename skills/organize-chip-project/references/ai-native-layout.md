@@ -1,6 +1,6 @@
 # AI-native chip project layout
 
-Use this as a semantic model, not a mandatory physical migration. Existing projects may map established paths into these roles through indexes and `AGENTS.md`.
+For onboarding-only work, use this as a semantic model. When the user asks to organize, refactor, or migrate an existing project, use it as the mandatory **physical canonical layout**. Move ordinary legacy source/test/documentation into these directories; record only protected/tool-constrained exceptions in `docs/exec-plans/active/physical-migration-map.json`.
 
 ```text
 project/
@@ -43,12 +43,13 @@ project/
 
 ## Adaptation rules
 
-1. Preserve well-known existing names such as `src`, `design`, `verif`, `tb`, `sim`, or `syn` when renaming would add risk without improving execution.
-2. Do not flatten IP blocks. Preserve hierarchy, ownership, and block-local manifests.
-3. Avoid copying a file into a new taxonomy while leaving two plausible sources of truth. Prefer an index or explicit canonical marker.
-4. Keep vendor IP, PDKs, encrypted models, large data, and submodules at their established boundaries.
-5. Document generated-source provenance and regeneration commands. Never disguise generated content as handwritten source.
-6. Add only lifecycle areas that exist. For example, omit `fw/` or `constraints/` if irrelevant.
+1. In physical-reorganization mode, migrate ordinary `src`/`design` HDL to `rtl`, ordinary `test`/`tb`/`uvm` collateral to `dv`, and ordinary `doc`/legacy documentation to their `docs/` subdivisions. Do not retain old copies.
+2. Do not flatten IP blocks. Preserve hierarchy, ownership, and block-local manifests below the new canonical roots.
+3. Retain root `Makefile`, `justfile`, Bender/FuseSoC manifests, CI config, or tool-mandated entry files only when their ecosystem requires the location. Update their content to name the new canonical paths.
+4. Avoid copying a file into a new taxonomy while leaving two plausible sources of truth. An old path may remain only as a migration-map `compatibility_shim` with a proven external consumer.
+5. Keep vendor IP, PDKs, encrypted models, large data, and submodules at their established boundaries; mark each as `retain_protected`.
+6. Document generated-source provenance and regeneration commands. Never disguise generated content as handwritten source.
+7. Add only lifecycle areas that exist. For example, omit `fw/` or `constraints/` if irrelevant.
 
 ## Minimum AGENTS.md content
 
