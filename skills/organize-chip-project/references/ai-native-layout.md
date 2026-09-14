@@ -4,8 +4,13 @@ Use this as a semantic model, not a mandatory physical migration. Existing proje
 
 ```text
 project/
-├── AGENTS.md                         # Fast onboarding, commands, boundaries
+├── AGENTS.md                         # Fact-based agent front door; not a blank template
 ├── docs/
+│   ├── ai-native/
+│   │   ├── repository-map.md          # Actual path/HDL-role map from repository scan
+│   │   ├── design-verification-index.md # RTL vs DV vs flow/protected boundaries
+│   │   ├── commands.md                # Existing commands/targets found in repo/CI
+│   │   └── inventory.json             # Machine-readable bounded evidence inventory
 │   ├── project-overview.md           # Purpose, maturity, configuration, owners
 │   ├── spec/                         # Normative requirements and traceability
 │   ├── architecture/                 # Design decomposition and interfaces
@@ -27,7 +32,8 @@ project/
 
 ## Meaning of each AI-facing surface
 
-- `AGENTS.md` is the front door: scope, source-of-truth map, known-good commands, path rules, generated/vendor boundaries, and links to deeper truth. Keep it concise and factual.
+- `AGENTS.md` is the front door: scope, source-of-truth map, known-good commands, path rules, generated/vendor boundaries, and links to deeper truth. Generate it from repository evidence and keep it concise and factual; never leave it as a generic TODO list.
+- `docs/ai-native/` is the explicit navigation layer: it provides a factual path map, design/DV/flow split, command index, and machine-readable inventory without relocating functional files just for taxonomy.
 - `docs/` is durable knowledge. Separate normative requirements from explanatory architecture and verification evidence.
 - `docs/exec-plans/active/execution-frontier.md` is resumable state: objective, baseline, completed work, current blocker, exact next command, acceptance criteria, and relevant logs/commits.
 - `config/` makes configurations and source selection explicit. Preserve the existing manifest format when tools already consume one.
@@ -47,15 +53,28 @@ project/
 ## Minimum AGENTS.md content
 
 ```markdown
-# Project guide
+# <Project name> repository guide
 
 ## Purpose and current state
-## Source-of-truth map
+<README/manifest-grounded scope and explicit unknowns>
+
+## Sources of truth
+<exact relative paths and their authority>
+
+## Important paths
+<RTL, DV, manifest, flow, generated, protected boundaries>
+
+## Before work
+<read order and status/frontier>
+
 ## Setup and canonical commands
-## Design and verification conventions
-## Generated, third-party, and protected areas
-## Validation expectations
-## Active work and known issues
+<commands actually found in Make/Just/CI/README>
+
+## Modification policy
+<generated/vendor/signoff/test/waiver rules>
+
+## Definition of done
+<proportionate validation and frontier update>
 ```
 
-Use exact commands and paths. Explicitly label unknown, unavailable, or unverified statements.
+Use exact commands and paths. Explicitly label unknown, unavailable, or unverified statements. Do not infer a command, verification result, top module, or signoff status from a directory name alone.

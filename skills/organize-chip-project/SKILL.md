@@ -5,7 +5,11 @@ description: Inspect, create, or safely reorganize ASIC, SoC, FPGA, RTL, IP, and
 
 # Organize Chip Project
 
-Build a project that an AI agent can understand, execute, verify, and resume safely. Treat preservation of design intent, source content, tool behavior, and reproducibility as hard constraints.
+Turn a hardware repository into an Agent-Native repository: an agent entering the root must be able to answer, from project-local files, **what this project is, where source of truth lives, which RTL/DV/flow paths matter, which exact commands are established, what must not change, and what to do next**. Treat preservation of design intent, source content, tool behavior, and reproducibility as hard constraints.
+
+The required deliverable is a fact-based navigation layer, not merely an attractive directory tree. Do not finish after creating blank `docs/`, `rtl/`, or `dv/` directories.
+
+Apply [references/agent-native-quality-bar.md](references/agent-native-quality-bar.md) as the acceptance test for every invocation. It defines the required agent entrance and the questions a new agent must answer without a broad repository search.
 
 ## Non-negotiable rules
 
@@ -51,11 +55,34 @@ Classify, do not guess. Locate:
 
 Use [references/discovery-and-mapping.md](references/discovery-and-mapping.md) for hardware-specific discovery patterns. Create an explicit old-path → role → proposed-path/action → reference-update → validation mapping before any move.
 
+Generate the fact-based navigation layer after the read-only inventory. Review the dry run first, then apply it:
+
+```bash
+python3 <skill-dir>/scripts/generate_agent_native.py <project-root>
+python3 <skill-dir>/scripts/generate_agent_native.py <project-root> --apply --update-agents
+python3 <skill-dir>/scripts/validate_agent_native.py <project-root>
+```
+
+The generator produces these project-local artifacts from actual repository evidence:
+
+- `AGENTS.md` — concise front door with purpose/status evidence, source-of-truth paths, concrete commands found in repository guidance/CI, protected boundaries, and next-action link. It changes only the marked generated block, preserving user-authored sections.
+- `docs/ai-native/repository-map.md` — top-level tree, HDL-module inventory, and role-to-path index.
+- `docs/ai-native/design-verification-index.md` — separate RTL/design, DV, constraints, manifests, and flow inputs.
+- `docs/ai-native/commands.md` — Make/Just targets and executable commands found in README/CI; it never invents a command.
+- `docs/ai-native/inventory.json` — machine-readable bounded inventory for later agents/tools.
+- `docs/exec-plans/active/execution-frontier.md` — current baseline, next action, and required evidence.
+
+For a pre-existing `AGENTS.md`, use `--update-agents` only after review: text outside the `organize-chip-project:generated` markers belongs to the project and is preserved. Never overwrite a user instruction file with a generic template.
+
+The generator creates missing agent-navigation files but does **not** overwrite an existing project document. Re-run with `--refresh-generated` only to refresh files that already begin with the generator ownership marker. This separation keeps user-authored design knowledge authoritative.
+
+After generation, read the produced `AGENTS.md` and replace/extend its generated facts with additional project-specific evidence from README, manifests, CI, specifications, and tool scripts. A generated outline is the starting point, not the completion criterion. Validate with `validate_agent_native.py`, then apply the five-question completion test in [references/agent-native-quality-bar.md](references/agent-native-quality-bar.md).
+
 ### 3. Design the smallest useful AI-native layer
 
 Read [references/ai-native-layout.md](references/ai-native-layout.md). Adapt it to the repository; do not force empty taxonomy or rename established tool conventions just for aesthetics.
 
-At minimum, make these facts quickly discoverable:
+At minimum, make these facts quickly discoverable in `AGENTS.md` and its linked indexes:
 
 - what the project is and its current maturity;
 - where authoritative specs, RTL/design, DV, constraints, and flows live;
@@ -63,7 +90,7 @@ At minimum, make these facts quickly discoverable:
 - which files are generated, third-party, security-sensitive, or frozen;
 - what is currently being executed and how another agent resumes it.
 
-Create a concise root `AGENTS.md` and use nested `AGENTS.md` files only where rules differ. Put durable truth under `docs/`; put active work state in `docs/exec-plans/active/execution-frontier.md`; put reproducible outputs under `runs/` or retain the project's established output convention.
+Create a concise root `AGENTS.md` (typically 80–120 lines and never over 150) and use nested `AGENTS.md` files only where rules differ. Use evidence, not plausible generic prose: write real relative paths, actual Make/Just/CI commands, known variants/tops only when found, and explicit “not discovered” statements otherwise. Put durable truth under `docs/`; put active work state in `docs/exec-plans/active/execution-frontier.md`; put reproducible outputs under `runs/` or retain the project's established output convention.
 
 ### 4. Apply changes in safe phases
 
@@ -96,6 +123,8 @@ Finish with a preservation report containing:
 
 If evidence is incomplete, say “structure migrated; equivalence not fully established,” not “done.”
 
+Do not report the repository as Agent-Native until the quality-bar completion test passes with project-specific evidence.
+
 ## New-project workflow
 
 Run the scaffold script in dry-run mode first, then apply:
@@ -105,6 +134,6 @@ python3 <skill-dir>/scripts/scaffold_project.py <project-root>
 python3 <skill-dir>/scripts/scaffold_project.py <project-root> --apply
 ```
 
-Fill `AGENTS.md`, project overview, spec index, verification strategy, and execution frontier with project-specific facts. Establish one canonical command surface for repeatable flows, preferably configuration-driven. Keep source manifests/configuration separate from ephemeral run artifacts. Capture tool versions, environment assumptions, seeds, configurations, and provenance with each run.
+Then create the navigation layer with `generate_agent_native.py`. For a genuinely new project, start the root `AGENTS.md` with explicitly labeled unknowns, then replace them as the spec, source tree, and canonical commands are created. Establish one canonical command surface for repeatable flows, preferably configuration-driven. Keep source manifests/configuration separate from ephemeral run artifacts. Capture tool versions, environment assumptions, seeds, configurations, and provenance with each run.
 
 Do not add placeholder RTL or DV that could be mistaken for a real implementation. Do not fabricate requirements, status, commands, ownership, or signoff evidence; mark unknowns explicitly.
