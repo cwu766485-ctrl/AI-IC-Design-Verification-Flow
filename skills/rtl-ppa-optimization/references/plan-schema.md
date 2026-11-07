@@ -29,6 +29,7 @@ metrics: {}      # see metric rules below
 budget:
   max_candidates: 4
   max_runtime_sec: 7200
+  max_total_runtime_sec: 28800
 read_only_assets: []
 ```
 
@@ -39,7 +40,9 @@ respective lists and records them in a source manifest for adapters.
 `rtl_scope` must match at least one project-relative source file and include
 every `rtl_sources` entry. It is used for source hashes and audit context.
 `allowed_patch_paths` must limit candidate
-changes to the intended RTL. All stage IDs listed under `required_stages` must
+changes to the intended RTL. Candidate changes must also be limited to files in
+the explicit ordered `rtl_sources` list, so a broad allowed pattern cannot
+introduce RTL absent from the compile order. All stage IDs listed under `required_stages` must
 exist and be enabled for that mode.
 Required stages and required metric source stages must declare at least one
 `expected_artifacts` path so missing reports cannot be silently ignored.
@@ -56,6 +59,7 @@ the evaluator only requires and records those gates.
 ```yaml
 stages:
   - id: regression
+    adapter_id: project.regression.v1
     modes: [baseline, candidate]
     cwd: .
     argv: [python3, tools/rtl_ppa/run_stage.py, regression, "{source_root}", "{run_dir}"]
@@ -73,24 +77,37 @@ placeholders are `{project_root}`, `{source_root}`, `{candidate_root}`,
 resolves to the isolated snapshot; the original project path is not passed to
 the process. The stage command is responsible for producing its own evidence.
 
-Each command must write the configured JSON result file and include nonempty
-`tool_versions` provenance in addition to the stage status, metrics and
-artifacts:
+Each command must write the configured JSON result file and include a matching
+`adapter_id`, `adapter_supported: true`, and nonempty `tool_versions` provenance
+in addition to the stage status, metrics and artifacts. The adapter identity
+must match the plan. The runner cannot prove that trusted adapter code reports
+truthful versions or implements the named operation; adapter review and a
+licensed-tool smoke test remain separate requirements.
 
 ```json
 {
   "status": "PASS",
+  "adapter_id": "project.synthesis.v1",
+  "adapter_supported": true,
   "tool_versions": {"synthesis": "Tool 2026.06"},
   "metrics": {"cell_area": 1234.5},
+  "metric_provenance": {
+    "cell_area": {"artifact": "synthesis-report.rpt", "parser_id": "dc-area", "parser_version": "1.2"}
+  },
   "artifacts": ["synthesis-report.rpt"]
 }
 ```
 
 Only a zero command exit code, passing log patterns, a result JSON with status
-`PASS`, and all expected artifacts allow the stage to pass. A nonzero exit is
+`PASS`, a matching supported adapter declaration, and nonempty expected
+artifacts allow the stage to pass. Passing stages record SHA-256 and size
+provenance for their result JSON and artifacts. A nonzero exit is
 `FAIL`, a missing executable/license/report/artifact is `BLOCKED`, malformed
 stage JSON is `ERROR`, and an unstarted downstream stage is `SKIPPED`. Stage
-artifacts and result JSON must stay inside the stage run directory.
+artifacts and result JSON must stay inside the stage run directory. Every
+reported metric must be finite and have `metric_provenance` naming one of the
+validated artifacts plus a nonempty parser ID and version; otherwise the stage
+is blocked or erroneous and its metric cannot be compared.
 
 ## Metric rules
 
@@ -159,9 +176,25 @@ metrics.json            # metrics extracted from configured source stages
 baseline.json           # baseline campaign summary
 evidence.json            # campaign status and stage records
 comparison.json         # candidate only, metric deltas and decision
-budget.json              # shared candidate count and elapsed time ledger
+budget.json              # shared candidate count and fractional elapsed-time ledger
 ```
 
-The runner does not edit the original RTL tree. Stage adapter commands are
-trusted project code and must be written to operate on the supplied snapshot
-and run directory only.
+`max_runtime_sec` applies to one baseline or candidate campaign. The separate
+`max_total_runtime_sec` applies cumulatively to baseline plus candidate time in
+the shared runs directory. Elapsed seconds retain fractional values. Campaigns
+in one runs directory are serialized with a lock; a process interrupted during
+a campaign is charged its reserved per-campaign allowance on the next run so
+an interrupted attempt cannot evade the cumulative budget. Stage timeouts are
+bounded by the tighter remaining campaign and cumulative allowance.
+
+The ledger is local bookkeeping, not a tamper-proof accounting service. Keep a
+runs directory single-user and preserve it with the resulting evidence. The
+runner does not edit the original RTL tree. Stage adapter commands are trusted
+project code and must be written to operate on the supplied snapshot and run
+directory only.
+
+Candidate comparison is blocked if the plan/source/top contract, seed, copied
+asset hashes, shared-stage adapter/tool versions, or metric parser provenance
+differ from the baseline. Declare external SDC and library files in
+`read_only_assets`; the runner cannot detect inputs an adapter reads without
+declaring them.

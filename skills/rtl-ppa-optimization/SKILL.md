@@ -23,15 +23,18 @@ claim Synopsys validation by itself.
    tool versions, constraints, seeds, metrics, and report artifacts. A clock
    frequency assumption or performance estimate is not measured PPA evidence.
 4. Bound candidate edits with `allowed_patch_paths`. Save each candidate as a
-   patch and evaluate it in an isolated snapshot. Do not overwrite the user's
-   RTL tree or prior candidate evidence.
+   patch and evaluate it in an isolated snapshot. Changes must also be present
+   in the ordered `rtl_sources` list. Do not overwrite the user's RTL tree or
+   prior candidate evidence.
 5. Run the configured stages in order. A failed stage stops downstream stages;
    downstream records become `SKIPPED`. Missing tools, licenses, reports,
    artifacts, or required metrics must remain visible as `BLOCKED`, `ERROR`, or
    another non-PASS status.
 6. Compare candidate metrics against the baseline and report the evaluator
    decision separately from execution status. `NO_IMPROVEMENT` is not an
-   optimization win; `REVIEW_TRADEOFF` needs human review.
+   optimization win; `REVIEW_TRADEOFF` needs human review. Any failed, blocked,
+   or skipped required candidate stage prevents acceptance, even if an earlier
+   stage reported improved metrics.
 7. Preserve the candidate patch, source revision, command logs, stage results,
    reports, and comparison JSON together. Never claim Design or Verification
    Signoff from this framework alone.
@@ -72,6 +75,23 @@ and library inputs are copied into the snapshot; assets containing symlinks or
 special files are blocked. The plan carries ordered RTL/testbench file lists,
 design top, and testbench top to the stage adapter through a source manifest.
 
+Each stage declares an `adapter_id`; a passing stage result must repeat that
+ID, report `adapter_supported: true`, and provide nonempty tool versions and
+required artifacts. Every metric must include artifact, parser ID, and parser
+version provenance that points to a validated stage artifact. The runner hashes
+passing artifacts and result JSON.
+Candidate comparison requires the same plan hash, source revision and base
+source hashes, ordered source/top contract, seed, read-only asset hashes, and
+compatible adapter/tool and metric parser versions for shared stages. This
+detects incompatible evidence; trusted adapters still need review to confirm
+they actually read the declared constraints and libraries.
+
+`max_runtime_sec` bounds one campaign. `max_total_runtime_sec` bounds baseline
+plus candidate runtime across a shared runs root. Fractional seconds are kept;
+campaigns share a file lock, and an interrupted attempt is charged its reserved
+allowance on the next invocation. Candidate attempts that reach campaign
+creation consume a candidate slot even if a later stage fails.
+
 ## Capability boundary
 
 | Capability | This skill provides | Project adapter still must provide |
@@ -84,5 +104,6 @@ design top, and testbench top to the stage adapter through a source manifest.
 | Throughput and numerical accuracy | Metric comparison and threshold gates | Reproducible workloads, counters, reference values and checker implementation |
 
 The framework is not a synthesis, STA, power, formal, or regression adapter.
-An adapter that emits `PASS` without its required report and metrics cannot
-produce a passing campaign.
+An adapter that omits required support declaration, tool version, metric, or
+nonempty report cannot produce a passing stage. Adapter JSON remains a trust
+boundary: fake-adapter CI verifies runner semantics only, not Synopsys behavior.
