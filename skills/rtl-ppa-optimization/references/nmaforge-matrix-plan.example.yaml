@@ -25,6 +25,7 @@ required_stages:
 budget:
   max_candidates: 3
   max_runtime_sec: 7200
+  max_total_runtime_sec: 21600
 read_only_assets:
   - source: /path/to/approved/stdcells.db
     target: external/private/stdcells.db
@@ -32,42 +33,49 @@ read_only_assets:
     target: external/private/matrix.sdc
 stages:
   - id: regression
+    adapter_id: nmaforge.matrix_tile.regression.v1
     modes: [baseline, candidate]
     argv: ["__CONFIGURE_PROJECT_ADAPTER__", regression, "{source_root}", "{run_dir}"]
     timeout_sec: 1800
     result_json: "{run_dir}/stage-result.json"
     expected_artifacts: ["{run_dir}/regression-summary.json"]
   - id: formal
+    adapter_id: nmaforge.matrix_tile.formal.v1
     modes: [candidate]
     argv: ["__CONFIGURE_PROJECT_ADAPTER__", formal, "{source_root}", "{run_dir}"]
     timeout_sec: 3600
     result_json: "{run_dir}/stage-result.json"
     expected_artifacts: ["{run_dir}/formal-summary.json"]
   - id: synthesis
+    adapter_id: nmaforge.matrix_tile.synthesis.v1
     modes: [baseline, candidate]
     argv: ["__CONFIGURE_PROJECT_ADAPTER__", synthesis, "{source_root}", "{run_dir}"]
     timeout_sec: 3600
     result_json: "{run_dir}/stage-result.json"
     expected_artifacts: ["{run_dir}/synthesis-report.rpt"]
   - id: sta
+    adapter_id: nmaforge.matrix_tile.sta.v1
     modes: [baseline, candidate]
     argv: ["__CONFIGURE_PROJECT_ADAPTER__", sta, "{source_root}", "{run_dir}"]
     timeout_sec: 3600
     result_json: "{run_dir}/stage-result.json"
     expected_artifacts: ["{run_dir}/timing-report.rpt"]
   - id: power
+    adapter_id: nmaforge.matrix_tile.power.v1
     modes: [baseline, candidate]
     argv: ["__CONFIGURE_PROJECT_ADAPTER__", power, "{source_root}", "{run_dir}"]
     timeout_sec: 3600
     result_json: "{run_dir}/stage-result.json"
     expected_artifacts: ["{run_dir}/power-report.rpt"]
   - id: performance
+    adapter_id: nmaforge.matrix_tile.performance.v1
     modes: [baseline, candidate]
     argv: ["__CONFIGURE_PROJECT_ADAPTER__", performance, "{source_root}", "{run_dir}"]
     timeout_sec: 1800
     result_json: "{run_dir}/stage-result.json"
     expected_artifacts: ["{run_dir}/performance-summary.json"]
   - id: accuracy
+    adapter_id: nmaforge.matrix_tile.accuracy.v1
     modes: [baseline, candidate]
     argv: ["__CONFIGURE_PROJECT_ADAPTER__", accuracy, "{source_root}", "{run_dir}"]
     timeout_sec: 1800

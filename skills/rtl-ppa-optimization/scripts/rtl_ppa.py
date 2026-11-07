@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run bounded RTL candidate evaluations in isolated source snapshots."""
 import argparse
+import fcntl
 import fnmatch
 import glob
 import hashlib
@@ -240,6 +241,9 @@ def validate_plan(plan, root):
         argv = stage.get("argv")
         if not isinstance(argv, list) or not argv or not all(isinstance(x, str) and x for x in argv):
             errors.append(sid + ": argv must be a nonempty string list")
+        adapter_id = stage.get("adapter_id")
+        if not isinstance(adapter_id, str) or not adapter_id.strip():
+            errors.append(sid + ": adapter_id must identify the stage adapter")
         timeout = stage.get("timeout_sec", 1800)
         if not isinstance(timeout, int) or timeout < 1 or timeout > 7200:
             errors.append(sid + ": timeout_sec must be between 1 and 7200")
@@ -328,7 +332,9 @@ def validate_plan(plan, root):
     if not isinstance(budget, dict):
         errors.append("budget must be a mapping")
     else:
-        for key, default, hard_limit in (("max_candidates", 4, 20), ("max_runtime_sec", 7200, 86400)):
+        for key, default, hard_limit in (("max_candidates", 4, 20),
+                                         ("max_runtime_sec", 7200, 86400),
+                                         ("max_total_runtime_sec", 28800, 604800)):
             value = budget.get(key, default)
             if not isinstance(value, int) or value < 1 or value > hard_limit:
                 errors.append("budget." + key + " must be between 1 and " + str(hard_limit))
@@ -467,7 +473,47 @@ def check_patch_paths(patch_path, allowed_patterns):
     return sorted(set(changed))
 
 
-def run_stage(stage, project_root, run_dir, candidate_root, source_manifest_path, seed=None):
+def artifact_provenance(path, stage_dir):
+    """Return content provenance for a nonempty in-stage artifact."""
+    path = Path(path)
+    if path.is_symlink():
+        raise BlockedError("artifact may not be a symlink: " + str(path))
+    path = ensure_within(path, stage_dir, "artifact")
+    if path.is_file():
+        size = path.stat().st_size
+        if size == 0:
+            raise BlockedError("artifact is empty: " + str(path))
+        return {"path": str(path.relative_to(stage_dir)), "kind": "file",
+                "size_bytes": size, "sha256": sha256(path)}
+    if path.is_dir():
+        files = [item for item in path.rglob("*") if item.is_file()]
+        if not files:
+            raise BlockedError("artifact directory is empty: " + str(path))
+        if any(item.is_symlink() for item in path.rglob("*")):
+            raise BlockedError("artifact directory contains a symlink: " + str(path))
+        return {"path": str(path.relative_to(stage_dir)), "kind": "directory",
+                "file_count": len(files),
+                "size_bytes": sum(item.stat().st_size for item in files),
+                "sha256": hash_tree(path)}
+    raise BlockedError("artifact is not a regular file or directory: " + str(path))
+
+
+def stage_artifact_path(value, mapping, stage_dir, label):
+    target = Path(apply_placeholders(value, mapping))
+    if not target.is_absolute():
+        target = stage_dir / target
+    root = Path(stage_dir).resolve()
+    current = target
+    while current != root and root in current.parents:
+        if current.is_symlink():
+            raise BlockedError(label + " may not traverse a symlink: " + str(current))
+        current = current.parent
+    if target == root and target.is_symlink():
+        raise BlockedError(label + " may not be a symlink: " + str(target))
+    return ensure_within(target, stage_dir, label)
+
+
+def run_stage(stage, project_root, run_dir, candidate_root, source_manifest_path, seed=None, mode=None):
     stage_dir = run_dir / "stages" / stage["id"]
     stage_dir.mkdir(parents=True)
     cwd_value = stage.get("cwd", ".")
@@ -477,10 +523,21 @@ def run_stage(stage, project_root, run_dir, candidate_root, source_manifest_path
                "{manifest}": str(source_manifest_path),
                "{seed}": str(seed if seed is not None else 0)}
     argv = [apply_placeholders(value, mapping) for value in stage["argv"]]
+    original_root = str(Path(project_root).resolve())
+    if any(original_root in value for value in argv):
+        raise BlockedError("stage command contains the original project path; use snapshot placeholders")
+    inherited_path_vars = [key for key, value in os.environ.items()
+                           if key != "PWD" and original_root in value]
+    if inherited_path_vars:
+        raise BlockedError("inherited environment references the original project path: " +
+                           ", ".join(sorted(inherited_path_vars)))
     env = dict(os.environ)
     env.update({"RTL_PPA_PROJECT_ROOT": str(candidate_root), "RTL_PPA_SOURCE_ROOT": str(candidate_root),
                 "RTL_PPA_RUN_DIR": str(stage_dir),
-                "RTL_PPA_SOURCE_MANIFEST": str(source_manifest_path)})
+                "RTL_PPA_SOURCE_MANIFEST": str(source_manifest_path),
+                "RTL_PPA_MODE": mode or "unknown",
+                "RTL_PPA_CAMPAIGN_ID": run_dir.name})
+    env["PWD"] = str(cwd)
     if seed is not None:
         env["SEED"] = str(seed)
     log_path = stage_dir / "command.log"
@@ -495,10 +552,8 @@ def run_stage(stage, project_root, run_dir, candidate_root, source_manifest_path
         license_missing = re.search(r"license.{0,40}(fail|denied|unavailable|checkout)|failed to obtain.{0,40}license", log_text, re.I)
         fail_patterns = [x for x in stage.get("fail_patterns", []) if re.search(x, log_text)]
         missing_patterns = [x for x in stage.get("pass_patterns", []) if not re.search(x, log_text)]
-        result_file = Path(apply_placeholders(stage["result_json"], mapping))
-        if not result_file.is_absolute():
-            result_file = stage_dir / result_file
-        ensure_within(result_file, stage_dir, "stage result JSON")
+        result_file = stage_artifact_path(stage["result_json"], mapping, stage_dir,
+                                          "stage result JSON")
         if license_missing:
             status, reason = "BLOCKED", "EDA license unavailable"
         elif return_code != 0:
@@ -525,26 +580,55 @@ def run_stage(stage, project_root, run_dir, candidate_root, source_manifest_path
                     status, reason = data.get("status"), data.get("reason") or "stage result was not PASS"
                 elif not isinstance(data.get("metrics", {}), dict) or not isinstance(data.get("artifacts", []), list) or not all(isinstance(x, str) for x in data.get("artifacts", [])):
                     status, reason = "ERROR", "stage metrics must be a mapping and artifacts must be a string list"
+                elif any(not valid_metric(value) for value in data.get("metrics", {}).values()):
+                    status, reason = "ERROR", "stage metric values must be finite numbers"
+                elif data.get("adapter_id") != stage.get("adapter_id"):
+                    status, reason = "BLOCKED", "stage adapter identity is missing or does not match the plan"
+                elif data.get("adapter_supported") is not True:
+                    status, reason = "BLOCKED", "stage adapter reports unsupported functionality"
                 elif (not isinstance(data.get("tool_versions"), dict) or not data.get("tool_versions") or
                       not all(isinstance(key, str) and isinstance(value, str) and value
                               for key, value in data.get("tool_versions", {}).items())):
                     status, reason = "BLOCKED", "stage tool_versions provenance is missing"
                 else:
                     missing_artifacts = []
+                    artifact_records = []
+                    artifact_paths = set()
                     for artifact in stage.get("expected_artifacts", []):
-                        target = Path(apply_placeholders(artifact, mapping))
-                        if not target.is_absolute():
-                            target = stage_dir / target
-                        ensure_within(target, stage_dir, "expected artifact")
+                        target = stage_artifact_path(artifact, mapping, stage_dir, "expected artifact")
                         if not target.exists():
                             missing_artifacts.append(str(artifact))
+                        else:
+                            artifact_paths.add(target)
+                            try:
+                                artifact_records.append(artifact_provenance(target, stage_dir))
+                            except BlockedError as exc:
+                                missing_artifacts.append(str(artifact) + " (" + str(exc) + ")")
                     for artifact in data.get("artifacts", []):
-                        target = Path(apply_placeholders(artifact, mapping))
-                        if not target.is_absolute():
-                            target = stage_dir / target
-                        ensure_within(target, stage_dir, "reported artifact")
+                        target = stage_artifact_path(artifact, mapping, stage_dir, "reported artifact")
                         if not target.exists():
                             missing_artifacts.append(str(artifact))
+                        else:
+                            artifact_paths.add(target)
+                            try:
+                                artifact_records.append(artifact_provenance(target, stage_dir))
+                            except BlockedError as exc:
+                                missing_artifacts.append(str(artifact) + " (" + str(exc) + ")")
+                    metric_provenance = data.get("metric_provenance", {})
+                    if not isinstance(metric_provenance, dict):
+                        missing_artifacts.append("metric_provenance must be a mapping")
+                    else:
+                        for metric_name in data.get("metrics", {}):
+                            provenance = metric_provenance.get(metric_name)
+                            if (not isinstance(provenance, dict) or
+                                    not all(isinstance(provenance.get(key), str) and provenance[key]
+                                            for key in ("artifact", "parser_id", "parser_version"))):
+                                missing_artifacts.append(metric_name + " metric provenance is missing")
+                                continue
+                            metric_artifact = stage_artifact_path(
+                                provenance["artifact"], mapping, stage_dir, "metric source artifact")
+                            if metric_artifact not in artifact_paths:
+                                missing_artifacts.append(metric_name + " provenance does not name a reported artifact")
                     if missing_artifacts:
                         status, reason = "BLOCKED", "required artifacts missing: " + ", ".join(missing_artifacts)
                     else:
@@ -553,17 +637,26 @@ def run_stage(stage, project_root, run_dir, candidate_root, source_manifest_path
         status, reason = "BLOCKED", "stage timeout"
     except FileNotFoundError as exc:
         status, reason = "BLOCKED", "tool not found: " + str(exc)
+    except PlanError as exc:
+        status, reason = "BLOCKED", str(exc)
     except OSError as exc:
         status, reason = "ERROR", str(exc)
     elapsed = round(time.time() - started, 3)
-    record = {"stage": stage["id"], "status": status, "return_code": return_code,
+    record = {"stage": stage["id"], "campaign_mode": mode,
+              "campaign_id": run_dir.name, "status": status, "return_code": return_code,
               "elapsed_sec": elapsed, "command": argv, "cwd": str(cwd),
               "log": str(log_path), "reason": reason, "seed": seed}
     if status == "PASS":
         record["result_json"] = str(result_file)
         record["metrics"] = data.get("metrics", {})
+        record["metric_provenance"] = data.get("metric_provenance", {})
         record["artifacts"] = data.get("artifacts", [])
         record["tool_versions"] = data.get("tool_versions", {})
+        record["adapter_id"] = data["adapter_id"]
+        record["adapter_supported"] = data["adapter_supported"]
+        record["artifact_manifest"] = artifact_records + [
+            {"path": "result_json", "kind": "file", "size_bytes": result_file.stat().st_size,
+             "sha256": sha256(result_file)}]
     (stage_dir / "runner-record.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     return record
 
@@ -591,9 +684,64 @@ def collect_metrics(stage_records, metric_rules):
     return merged
 
 
+def source_contract(plan):
+    return {"design_top": plan["design_top"], "testbench_top": plan["testbench_top"],
+            "rtl_sources": plan["rtl_sources"],
+            "testbench_sources": plan["testbench_sources"],
+            "behavior_contract": plan["behavior_contract"]}
+
+
+def baseline_compatibility_error(baseline, candidate, baseline_metrics_doc, candidate_stages):
+    checks = [
+        (baseline.get("status") == "PASS", "baseline evidence is not PASS"),
+        (baseline.get("plan_sha256") == candidate.get("plan_sha256"),
+         "baseline was produced from a different plan"),
+        (baseline.get("project") == candidate.get("project") and
+         baseline.get("behavior_contract") == candidate.get("behavior_contract"),
+         "baseline project or behavior contract does not match"),
+        (baseline.get("read_only_asset_hashes") == candidate.get("read_only_asset_hashes"),
+         "baseline read-only asset hashes do not match candidate assets"),
+        (baseline.get("source_revision") == candidate.get("source_revision"),
+         "baseline source revision does not match candidate source revision"),
+        (baseline.get("base_source_hashes") == candidate.get("base_source_hashes"),
+         "baseline source hashes do not match candidate base sources"),
+        (baseline.get("source_contract") == candidate.get("source_contract"),
+         "baseline source lists or tops do not match candidate"),
+        (baseline.get("seed") == candidate.get("seed"),
+         "baseline seed does not match candidate seed"),
+        (isinstance(baseline_metrics_doc, dict) and
+         isinstance(baseline_metrics_doc.get("metrics"), dict),
+         "baseline metrics JSON is invalid"),
+    ]
+    for ok, message in checks:
+        if not ok:
+            return message
+    baseline_stages = {stage.get("stage"): stage for stage in baseline.get("stages", [])
+                       if isinstance(stage, dict)}
+    candidate_stages = {stage.get("stage"): stage for stage in candidate_stages
+                        if isinstance(stage, dict)}
+    for stage_id in sorted(set(baseline_stages) & set(candidate_stages)):
+        left, right = baseline_stages[stage_id], candidate_stages[stage_id]
+        if left.get("status") != "PASS" or right.get("status") != "PASS":
+            continue
+        if left.get("adapter_id") != right.get("adapter_id"):
+            return "stage adapter differs from baseline for " + stage_id
+        if left.get("tool_versions") != right.get("tool_versions"):
+            return "tool versions differ from baseline for " + stage_id
+        if left.get("metric_provenance") != right.get("metric_provenance"):
+            return "metric parser provenance differs from baseline for " + stage_id
+    return None
+
+
 def valid_metric(value):
     return (isinstance(value, (int, float)) and not isinstance(value, bool) and
             math.isfinite(float(value)))
+
+
+def remaining_runtime(per_campaign_limit, total_limit, campaign_elapsed, prior_runtime):
+    """Return the tighter remaining wall-clock allowance, preserving fractions."""
+    return min(per_campaign_limit - campaign_elapsed,
+               total_limit - prior_runtime - campaign_elapsed)
 
 
 def compare_metrics(rules, baseline, candidate):
@@ -694,7 +842,7 @@ def preflight(root, plan):
     return state
 
 
-def execute_campaign(args, mode):
+def _execute_campaign_locked(args, mode):
     root = Path(args.project_root).resolve()
     plan_path = Path(args.plan).resolve()
     plan = load_yaml(plan_path)
@@ -707,6 +855,7 @@ def execute_campaign(args, mode):
                           "project_root": str(root), "execute_required": True}, indent=2))
         return 0
     campaign_started = time.time()
+    campaign_monotonic = time.monotonic()
     state = preflight(root, plan)
     runs_root = Path(args.runs_root).resolve()
     try:
@@ -717,12 +866,34 @@ def execute_campaign(args, mode):
         raise BlockedError("runs_root must be outside project_root to keep source evidence clean")
     runs_root.mkdir(parents=True, exist_ok=True)
     ledger_path = runs_root / "budget.json"
-    ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {"candidates": 0, "runtime_sec": 0}
+    ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {"candidates": 0, "runtime_sec": 0.0}
+    if not isinstance(ledger, dict):
+        raise BlockedError("budget ledger must be a JSON object")
+    if (not isinstance(ledger.get("candidates", 0), int) or isinstance(ledger.get("candidates", 0), bool) or
+            not isinstance(ledger.get("runtime_sec", 0), (int, float)) or
+            isinstance(ledger.get("runtime_sec", 0), bool)):
+        raise BlockedError("budget ledger counters are invalid")
+    if ledger.get("active_campaign"):
+        # A process that died while holding the campaign lock is charged its
+        # reserved per-campaign budget, preventing interrupted runs from
+        # disappearing from cumulative accounting.
+        ledger["runtime_sec"] = float(ledger.get("runtime_sec", 0)) + float(ledger.get("active_runtime_reservation_sec", 0))
+        ledger["interrupted_campaigns"] = int(ledger.get("interrupted_campaigns", 0)) + 1
+        ledger.pop("active_campaign", None)
+        ledger.pop("active_runtime_reservation_sec", None)
+        write_json(ledger_path, ledger)
     plan_hash = sha256(plan_path)
     if ledger.get("plan_sha256", plan_hash) != plan_hash:
         raise BlockedError("runs_root budget ledger belongs to a different plan")
     ledger["plan_sha256"] = plan_hash
     budget = plan.get("budget", {})
+    per_campaign_limit = float(budget.get("max_runtime_sec", 7200))
+    total_limit = float(budget.get("max_total_runtime_sec", 28800))
+    prior_runtime = float(ledger.get("runtime_sec", 0))
+    if not math.isfinite(prior_runtime) or prior_runtime < 0:
+        raise BlockedError("budget ledger runtime is invalid")
+    if prior_runtime >= total_limit:
+        raise BlockedError("cumulative runtime budget exhausted")
     if mode == "candidate":
         if ledger["candidates"] + 1 > budget.get("max_candidates", 4):
             raise BlockedError("candidate budget exhausted")
@@ -732,23 +903,44 @@ def execute_campaign(args, mode):
     output = runs_root / run_id
     if output.exists():
         raise BlockedError("output already exists: " + str(output))
-    output.mkdir(parents=True)
-    snapshot = output / "source"
-    asset_hashes = create_snapshot(root, state["sha"], snapshot, plan.get("read_only_assets", []))
-    base_source_hashes = {}
-    for path in expand_sources(root, plan["rtl_scope"]):
-        base_source_hashes[str(path.relative_to(root))] = sha256(path)
-    evidence = {"status": "PASS", "mode": mode, "project": plan["project"],
-                "source_revision": state["sha"], "working_tree": state["working_tree"],
-                "plan_sha256": sha256(plan_path), "base_source_hashes": base_source_hashes,
-                "read_only_asset_hashes": asset_hashes,
-                "behavior_contract": plan.get("behavior_contract"), "candidate_id": run_id,
-                "stages": [], "started_at": campaign_started}
+    patch_path = None
+    changed_paths = []
     if mode == "candidate":
         patch_path = Path(args.patch).resolve()
         if not patch_path.is_file():
             raise BlockedError("candidate patch does not exist: " + str(patch_path))
         changed_paths = check_patch_paths(patch_path, plan["allowed_patch_paths"])
+        uncompiled_paths = sorted(set(changed_paths) - set(plan["rtl_sources"]))
+        if uncompiled_paths:
+            raise BlockedError("candidate patch changes files outside ordered rtl_sources: " + ", ".join(uncompiled_paths))
+        check = subprocess.run(["git", "apply", "--check", str(patch_path)], cwd=str(root),
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        if check.returncode:
+            raise BlockedError("candidate patch does not apply cleanly: " + check.stderr.strip())
+    output.mkdir(parents=True)
+    runtime_reservation = min(per_campaign_limit, total_limit - prior_runtime)
+    ledger["plan_sha256"] = plan_hash
+    ledger["active_campaign"] = run_id
+    ledger["active_runtime_reservation_sec"] = runtime_reservation
+    if mode == "candidate":
+        # Failed candidates consume search slots too.
+        ledger["candidates"] = ledger.get("candidates", 0) + 1
+    write_json(ledger_path, ledger)
+    snapshot = output / "source"
+    asset_hashes = create_snapshot(root, state["sha"], snapshot, plan.get("read_only_assets", []))
+    base_source_hashes = {}
+    for path in expand_sources(root, plan["rtl_scope"]):
+        base_source_hashes[str(path.relative_to(root))] = sha256(path)
+    effective_seed = args.seed if args.seed is not None else 0
+    contract = source_contract(plan)
+    evidence = {"status": "PASS", "mode": mode, "project": plan["project"],
+                "source_revision": state["sha"], "working_tree": state["working_tree"],
+                "plan_sha256": sha256(plan_path), "base_source_hashes": base_source_hashes,
+                "read_only_asset_hashes": asset_hashes,
+                "behavior_contract": plan.get("behavior_contract"), "candidate_id": run_id,
+                "seed": effective_seed, "source_contract": contract,
+                "stages": [], "started_at": campaign_started}
+    if mode == "candidate":
         check = subprocess.run(["git", "apply", "--check", str(patch_path)], cwd=str(snapshot),
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         if check.returncode:
@@ -761,6 +953,9 @@ def execute_campaign(args, mode):
         evidence["candidate_patch_sha256"] = sha256(patch_path)
         evidence["changed_paths"] = changed_paths
     source_hashes = {}
+    for source in expand_sources(snapshot, plan["rtl_scope"]):
+        value = str(source.relative_to(snapshot))
+        source_hashes[value] = sha256(source)
     for value in plan["rtl_sources"] + plan["testbench_sources"]:
         source_path = snapshot / value
         source_hashes[value] = sha256(source_path)
@@ -777,7 +972,7 @@ def execute_campaign(args, mode):
                "read_only_asset_hashes": asset_hashes,
                "candidate_patch_sha256": evidence.get("candidate_patch_sha256"),
                "changed_paths": evidence.get("changed_paths", []), "plan_sha256": evidence["plan_sha256"]})
-    started_all = campaign_started
+    started_all = campaign_monotonic
     records = []
     required = set(required_stage_ids(plan, candidate=(mode == "candidate")))
     selected = [stage for stage in plan["stages"] if mode in stage.get("modes", ["baseline", "candidate"])]
@@ -786,14 +981,30 @@ def execute_campaign(args, mode):
     if absent:
         raise PlanError("required stages are disabled for " + mode + ": " + ", ".join(absent))
     for stage in selected:
-        remaining = budget.get("max_runtime_sec", 7200) - (time.time() - started_all)
-        if remaining < 1:
+        campaign_elapsed = time.monotonic() - started_all
+        remaining = remaining_runtime(per_campaign_limit, total_limit,
+                                       campaign_elapsed, prior_runtime)
+        if remaining <= 0:
             records.append({"stage": stage["id"], "status": "BLOCKED", "reason": "campaign runtime budget exhausted"})
             evidence["status"] = "BLOCKED"
             break
         bounded_stage = dict(stage)
-        bounded_stage["timeout_sec"] = min(stage.get("timeout_sec", 1800), int(remaining))
-        record = run_stage(bounded_stage, root, output, snapshot, source_manifest, args.seed)
+        bounded_stage["timeout_sec"] = min(float(stage.get("timeout_sec", 1800)), remaining)
+        try:
+            record = run_stage(bounded_stage, root, output, snapshot, source_manifest,
+                               effective_seed, mode)
+        except BlockedError as exc:
+            record = {"stage": stage["id"], "campaign_mode": mode, "campaign_id": run_id,
+                      "status": "BLOCKED", "return_code": None,
+                      "reason": str(exc), "seed": effective_seed}
+        except OSError as exc:
+            record = {"stage": stage["id"], "campaign_mode": mode, "campaign_id": run_id,
+                      "status": "ERROR", "return_code": None,
+                      "reason": str(exc), "seed": effective_seed}
+        except (ValueError, KeyError, TypeError) as exc:
+            record = {"stage": stage["id"], "campaign_mode": mode, "campaign_id": run_id,
+                      "status": "ERROR", "return_code": None,
+                      "reason": str(exc), "seed": effective_seed}
         records.append(record)
         if record["status"] != "PASS":
             evidence["status"] = record["status"]
@@ -810,7 +1021,8 @@ def execute_campaign(args, mode):
         evidence["status"] = "ERROR"
         evidence["metric_error"] = str(exc)
     evidence["stages"] = records
-    evidence["elapsed_sec"] = round(time.time() - started_all, 3)
+    elapsed_exact = max(0.0, time.monotonic() - started_all)
+    evidence["elapsed_sec"] = round(elapsed_exact, 6)
     evidence["finished_at"] = time.time()
     if missing_required and evidence["status"] in ("PASS", "NOT_RUN", "SKIPPED"):
         evidence["status"] = "BLOCKED"
@@ -825,71 +1037,72 @@ def execute_campaign(args, mode):
                 evidence["missing_required_metrics"] = missing_metrics
         write_json(output / "baseline.json", evidence)
     else:
-        baseline_path = Path(args.baseline).resolve()
-        if not baseline_path.is_file():
-            evidence["status"] = "BLOCKED"
-            evidence["reason"] = "baseline evidence file is missing"
+        if evidence["status"] != "PASS" or missing_required:
+            evidence["reason"] = "candidate stages did not all pass; optimization is not evaluated"
+            write_json(output / "comparison.json", {
+                "status": evidence["status"], "decision": "BLOCKED",
+                "reason": evidence["reason"], "candidate_id": run_id})
         else:
-            try:
-                baseline = json.loads(baseline_path.read_text())
-            except (ValueError, OSError):
-                baseline = None
-            if not isinstance(baseline, dict):
+            baseline_path = Path(args.baseline).resolve()
+            if not baseline_path.is_file():
                 evidence["status"] = "BLOCKED"
-                evidence["reason"] = "baseline evidence JSON is invalid"
-            elif baseline.get("status") != "PASS":
-                evidence["status"] = "BLOCKED"
-                evidence["reason"] = "baseline evidence is not PASS"
+                evidence["reason"] = "baseline evidence file is missing"
             else:
-                baseline_metrics_path = baseline_path.parent / "metrics.json"
-                if not baseline_metrics_path.is_file():
+                try:
+                    baseline = json.loads(baseline_path.read_text())
+                except (ValueError, OSError):
+                    baseline = None
+                if not isinstance(baseline, dict):
                     evidence["status"] = "BLOCKED"
-                    evidence["reason"] = "baseline metrics file is missing"
-                elif baseline.get("plan_sha256") != evidence.get("plan_sha256"):
-                    evidence["status"] = "BLOCKED"
-                    evidence["reason"] = "baseline was produced from a different plan"
-                elif (baseline.get("project") != plan.get("project") or
-                      baseline.get("behavior_contract") != plan.get("behavior_contract")):
-                    evidence["status"] = "BLOCKED"
-                    evidence["reason"] = "baseline project or behavior contract does not match"
-                elif baseline.get("read_only_asset_hashes", {}) != asset_hashes:
-                    evidence["status"] = "BLOCKED"
-                    evidence["reason"] = "baseline read-only asset hashes do not match candidate assets"
+                    evidence["reason"] = "baseline evidence JSON is invalid"
                 else:
-                    try:
-                        baseline_metrics_doc = json.loads(baseline_metrics_path.read_text())
-                    except (ValueError, OSError):
-                        baseline_metrics_doc = None
-                    baseline_metrics = baseline_metrics_doc.get("metrics") if isinstance(baseline_metrics_doc, dict) else None
-                    if not isinstance(baseline_metrics, dict):
+                    baseline_metrics_path = baseline_path.parent / "metrics.json"
+                    if not baseline_metrics_path.is_file():
                         evidence["status"] = "BLOCKED"
-                        evidence["reason"] = "baseline metrics JSON is invalid"
-                    elif baseline.get("source_revision") != state["sha"]:
-                        evidence["status"] = "BLOCKED"
-                        evidence["reason"] = "baseline source revision does not match candidate source revision"
+                        evidence["reason"] = "baseline metrics file is missing"
                     else:
-                        comparison = compare_metrics(plan["metrics"], baseline_metrics, metrics)
-                        compare_status = evidence["status"]
-                        if compare_status == "PASS" and comparison["decision"] == "BLOCKED":
-                            compare_status = "BLOCKED"
-                        elif compare_status == "PASS" and comparison["decision"] == "REJECT":
-                            compare_status = "FAIL"
-                        comparison.update({"status": compare_status,
-                                           "baseline_source_revision": baseline.get("source_revision"),
-                                           "candidate_source_revision": state["sha"],
-                                           "candidate_id": run_id})
-                        write_json(output / "comparison.json", comparison)
-                        if evidence["status"] == "PASS" and comparison["decision"] == "BLOCKED":
+                        try:
+                            baseline_metrics_doc = json.loads(baseline_metrics_path.read_text())
+                        except (ValueError, OSError):
+                            baseline_metrics_doc = None
+                        baseline_metrics = baseline_metrics_doc.get("metrics") if isinstance(baseline_metrics_doc, dict) else None
+                        compatibility_error = baseline_compatibility_error(
+                            baseline, evidence, baseline_metrics_doc, records)
+                        if compatibility_error:
                             evidence["status"] = "BLOCKED"
-                            evidence["decision"] = comparison["decision"]
-                        elif evidence["status"] == "PASS" and comparison["decision"] == "REJECT":
-                            evidence["status"] = "FAIL"
-                            evidence["decision"] = comparison["decision"]
+                            evidence["reason"] = compatibility_error
+                            write_json(output / "comparison.json", {
+                                "status": "BLOCKED", "decision": "BLOCKED",
+                                "reason": compatibility_error, "candidate_id": run_id})
+                        else:
+                            comparison = compare_metrics(plan["metrics"], baseline_metrics, metrics)
+                            compare_status = evidence["status"]
+                            if compare_status == "PASS" and comparison["decision"] == "BLOCKED":
+                                compare_status = "BLOCKED"
+                            elif compare_status == "PASS" and comparison["decision"] == "REJECT":
+                                compare_status = "FAIL"
+                            comparison.update({"status": compare_status,
+                                               "baseline_source_revision": baseline.get("source_revision"),
+                                               "candidate_source_revision": state["sha"],
+                                               "candidate_id": run_id})
+                            write_json(output / "comparison.json", comparison)
+                            if evidence["status"] == "PASS" and comparison["decision"] == "BLOCKED":
+                                evidence["status"] = "BLOCKED"
+                                evidence["decision"] = comparison["decision"]
+                            elif evidence["status"] == "PASS" and comparison["decision"] == "REJECT":
+                                evidence["status"] = "FAIL"
+                                evidence["decision"] = comparison["decision"]
+    if mode == "candidate" and not (output / "comparison.json").is_file():
+        write_json(output / "comparison.json", {
+            "status": evidence["status"], "decision": "BLOCKED",
+            "reason": evidence.get("reason", "candidate comparison could not be completed"),
+            "candidate_id": run_id})
     write_json(output / "evidence.json", evidence)
-    elapsed = evidence.get("elapsed_sec", 0)
-    ledger["runtime_sec"] = ledger.get("runtime_sec", 0) + int(elapsed)
-    if mode == "candidate":
-        ledger["candidates"] = ledger.get("candidates", 0) + 1
+    elapsed = evidence.get("elapsed_sec", 0.0)
+    ledger_elapsed = max(0.0, time.monotonic() - started_all)
+    ledger["runtime_sec"] = prior_runtime + ledger_elapsed
+    ledger.pop("active_campaign", None)
+    ledger.pop("active_runtime_reservation_sec", None)
     write_json(ledger_path, ledger)
     summary = {"status": evidence["status"], "mode": mode, "output": str(output),
                "evidence": str(output / "evidence.json"), "elapsed_sec": elapsed}
@@ -897,6 +1110,24 @@ def execute_campaign(args, mode):
         summary["comparison"] = json.loads((output / "comparison.json").read_text())
     print(json.dumps(summary, indent=2))
     return 0 if evidence["status"] in ("PASS", "NOT_RUN") else 1
+
+
+def execute_campaign(args, mode):
+    if not args.execute:
+        return _execute_campaign_locked(args, mode)
+    root = Path(args.project_root).resolve()
+    runs_root = Path(args.runs_root).resolve()
+    try:
+        runs_root.relative_to(root)
+    except ValueError:
+        pass
+    else:
+        raise BlockedError("runs_root must be outside project_root to keep source evidence clean")
+    runs_root.mkdir(parents=True, exist_ok=True)
+    lock_path = runs_root / ".rtl-ppa-budget.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        return _execute_campaign_locked(args, mode)
 
 
 def main():

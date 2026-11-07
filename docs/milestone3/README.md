@@ -10,7 +10,8 @@ accuracy measurements.
 
 | Capability | Framework state | NMAForge Matrix evidence state |
 |---|---|---|
-| Source revision and candidate patch records | Implemented; Git snapshot, allowlisted patch, manifest and candidate budget | Not run against NMAForge |
+| Source revision and candidate patch records | Implemented; isolated Git snapshot, compiled-source patch allowlist, plan/source/asset/seed/tool compatibility, fractional per-campaign and cumulative budgets | Not run against NMAForge |
+| Stage artifact and metric evidence | Implemented checks for supported adapter identity, nonempty SHA-256 artifacts, and metric-to-artifact/parser provenance | No real adapter evidence captured |
 | Regression gate | Implemented as a required ordered stage | Existing regression documentation and reference model were found; no adapter is wired to this evaluator |
 | Formal equivalence | Candidate `formal` stage is mandatory for cycle-equivalent plans | No formal campaign evidence captured for this milestone |
 | Synthesis cell area | Metric gate and report-artifact requirement | No measured area report captured |
@@ -66,6 +67,17 @@ project worktree. Candidate source edits are confined to `allowed_patch_paths`;
 stage outputs are confined to each run directory. Required reports and
 metrics cannot be replaced with zero or inferred from a successful shell exit.
 
+PR-01 hardening requires a named and supported adapter in every passing stage
+result, hashes every nonempty required artifact, and checks baseline/candidate
+compatibility across the plan, source revision and base RTL hashes, file/top
+contract, seed, copied read-only asset hashes, and shared-stage adapter/tool
+versions. Patch changes must belong to the ordered RTL file list as well as the
+allowlist. A candidate stage failure produces a blocked comparison and cannot
+be accepted based on metrics from an earlier stage. Per-campaign and cumulative
+runtime budgets are separate, retain fractional seconds, and share a locked
+ledger. Python-only tests are in `tests/rtl_ppa`; they use fake adapters and do
+not validate Synopsys commands.
+
 ## Migration and compatibility
 
 The existing `organize-chip-project`, `write-agents-md`, and
@@ -83,6 +95,14 @@ patches.
 - The framework relies on trusted adapter commands to honor the supplied
   snapshot and output directory. It does not sandbox EDA processes at the OS
   level.
+- Adapter identity, support, and tool versions are adapter-reported fields.
+  The evaluator checks consistency and evidence presence but cannot prove the
+  named tool or operation was actually used.
+- External constraints and libraries must be declared as `read_only_assets` so
+  the runner copies and hashes them. The runner cannot discover undeclared
+  files an adapter might open through an external path.
+- Candidate runs require the same committed plan as the baseline. A changed
+  PDK or SDC requires a new baseline.
 - PDK/library assets are copied into a private run snapshot, which can require
   substantial disk space. Symlink-containing asset trees are rejected.
 - No physical PPA smoke run, formal proof, or licensed-tool check was possible
