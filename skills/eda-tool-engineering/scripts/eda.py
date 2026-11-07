@@ -3,7 +3,8 @@
 import argparse, datetime as dt, json, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 from eda_config import ConfigError, load, resolve, sources
-from eda_runtime import build_stages, execute_plan, manifest as make_manifest, save, parse_qor, sha256, tool_version
+from eda_runtime import artifact_record, build_stages, execute_plan, manifest as make_manifest, save, parse_qor, parse_power, sha256, tool_version
+from eda_runner import RunnerError, execute_remote, runner_config
 
 HOME_DEFAULTS = {
     "vcs": ("VCS_HOME", "vcs"), "verdi": ("VERDI_HOME", "verdi"),
@@ -14,12 +15,13 @@ HOME_DEFAULTS = {
     "pt": ("PRIME_HOME", "pt_shell"), "starrc": ("STARRC_HOME", "starrc_shell"),
     "dft": ("TESTMAX_HOME", "dft_shell"), "tmax": ("TESTMAX_HOME", "tmax"),
     "rtla": ("RTLA_HOME", "rtl_shell"), "lc": ("LC_HOME", "lc_shell"),
+    "fc": ("FC_HOME", "fc_shell"),
 }
 FLOW_TOOL = {"sim":"vcs", "coverage":"urg", "debug":"verdi", "lint":"spyglass", "cdc":"spyglass",
              "formal":"vcf", "formality":"formal", "synth":"dc", "dft":"dc", "atpg":"tmax",
              "mbist":"dft", "lbist":"dft", "apr":"icc2", "sta":"pt",
-             "power":"pt", "starrc":"starrc"}
-EXECUTABLE_FLOWS = {"sim", "coverage", "synth", "sta"}
+             "power":"pt", "starrc":"starrc", "regression":"vcs"}
+EXECUTABLE_FLOWS = {"sim", "regression", "coverage", "synth", "sta"}
 SCRIPT_ONLY_FLOWS = set(FLOW_TOOL) - EXECUTABLE_FLOWS
 TEMPLATE_ONLY = {"mbist", "lbist", "apr", "power", "starrc"}
 
@@ -83,8 +85,7 @@ def executable(tool):
 def ensure_config(root):
     path = root / "eda.yaml"
     if not path.exists():
-        print(f"[eda] no eda.yaml found; initializing {path}", file=sys.stderr)
-        init_config(root)
+        raise ConfigError("eda.yaml is missing; use the explicit 'init' command and review the generated paths")
     return path
 
 def rtl_sources(root):
@@ -293,10 +294,10 @@ def init_config(root, name=None, top=None, force=False):
     print(f"created: {path}")
     return 0
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(prog="eda.py")
-    ap.add_argument("command", choices=["init", "doctor", "plan", "run", "report", "validate"])
-    ap.add_argument("--flow", choices=sorted(FLOW_TOOL))
+    ap.add_argument("command", choices=["init", "doctor", "plan", "run", "report", "validate", "resume"])
+    ap.add_argument("--flow", choices=sorted(set(FLOW_TOOL) | {"rtl_to_sim", "rtl_to_regression", "rtl_to_synth", "rtl_to_sim_synth"}))
     ap.add_argument("--tool", choices=sorted(HOME_DEFAULTS))
     ap.add_argument("--name")
     ap.add_argument("--top")
@@ -304,10 +305,24 @@ def main():
     ap.add_argument("--execute", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--run-id")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     root = project_root()
     if args.command == "init":
         return init_config(root, args.name, args.top, args.force)
+    if args.command == "resume" or (args.command == "report" and args.run_id):
+        from flow_engine import main as flow_main
+        forwarded = ["resume" if args.command == "resume" else "report", "--run-id", args.run_id or ""]
+        if args.execute and args.command == "resume":
+            forwarded.append("--execute")
+        return flow_main(forwarded)
+    if args.command in ("plan", "run") and args.flow in {"rtl_to_sim", "rtl_to_regression", "rtl_to_synth", "rtl_to_sim_synth"}:
+        from flow_engine import main as flow_main
+        forwarded = [args.command, "--flow", args.flow]
+        if args.run_id:
+            forwarded += ["--run-id", args.run_id]
+        if args.command == "run" and args.execute and not args.dry_run:
+            forwarded.append("--execute")
+        return flow_main(forwarded)
     try:
         config_path = ensure_config(root)
         cfg = parse_config(config_path)
@@ -326,7 +341,7 @@ def main():
             checks["rtl_sources"] = len(resolved["rtl"])
         except ConfigError as exc:
             checks["rtl_error"] = str(exc)
-        for flow in ("sim", "coverage", "synth", "sta"):
+        for flow in ("sim", "regression", "coverage", "synth", "sta"):
             if flow not in cfg.get("flows", {}):
                 continue
             tool_name = FLOW_TOOL[flow]
@@ -343,10 +358,19 @@ def main():
             if flow in cfg.get("flows", {}):
                 checks[flow] = check
         status = "BLOCKED" if "rtl_error" in checks or any(x.get("status") == "BLOCKED" for x in checks.values() if isinstance(x, dict)) else "PASS"
+        try:
+            runner = runner_config(cfg)
+            runner_status = "PASS"
+        except RunnerError as exc:
+            runner, runner_status = {"kind": cfg.get("runner", {}).get("kind", "local")}, "BLOCKED"
+            checks["runner_error"] = str(exc)
+            status = "BLOCKED"
         print(json.dumps({"status": status, "project_root": str(root), "config": str(config_path),
                           "top": cfg["top"], "checks": checks,
                           "tools": {k: executable(k) for k in HOME_DEFAULTS},
-                          "license_configured": bool(os.environ.get("LM_LICENSE_FILE") or os.environ.get("SNPSLMD_LICENSE_FILE"))}, indent=2))
+                          "runner": {"configuration": runner, "configuration_status": runner_status},
+                          "license_server_environment_set": bool(os.environ.get("LM_LICENSE_FILE") or os.environ.get("SNPSLMD_LICENSE_FILE")),
+                          "note": "doctor validates local configuration and executable presence; license checkout is reported only by explicit feature probes or passing run evidence"}, indent=2))
         return 0 if status == "PASS" else 1
     if not args.flow: ap.error("--flow is required for plan/run")
     tool = args.tool or FLOW_TOOL[args.flow]; exe = executable(tool)
@@ -357,24 +381,72 @@ def main():
     if run_dir.exists():
         print(json.dumps({"status": "BLOCKED", "error": f"run already exists: {run_dir}"}), file=sys.stderr)
         return 2
+    execute = args.command == "run" and args.execute and not args.dry_run
+    if execute and args.flow in EXECUTABLE_FLOWS and os.environ.get("EDA_REMOTE_EXECUTION") != "1":
+        try:
+            runner = runner_config(cfg)
+            if runner.get("kind") == "ssh":
+                result = execute_remote(root, cfg, args.flow, run_id, run_dir)
+                print(json.dumps(result, indent=2))
+                return 0 if result.get("status") == "PASS" else 1
+        except RunnerError as exc:
+            run_dir.mkdir(parents=True, exist_ok=True)
+            result = {"run_id": run_id, "flow": args.flow, "status": "BLOCKED",
+                      "error_class": "SSH_RUNNER_UNAVAILABLE", "reason": str(exc),
+                      "runner": {"kind": "ssh"}}
+            save(run_dir / "manifest.json", result)
+            print(json.dumps(result, indent=2))
+            return 1
     run_dir.mkdir(parents=True)
     if args.flow in EXECUTABLE_FLOWS:
         try:
             inputs, stages, options = build_stages(args.flow, root, cfg, run_dir, exe)
-            execute = args.command == "run" and args.execute and not args.dry_run
             records = execute_plan(stages, run_dir, execute)
             result = make_manifest(root, run_id, args.flow, tool, exe, inputs, stages, options, records, run_dir)
             result["project"] = cfg["name"]
             result["config"] = str(config_path)
-            if args.flow in ("synth", "sta") and (run_dir / "qor.rpt").exists():
+            result["runner"] = {"kind": "local"}
+            metrics = {}
+            if args.flow in ("synth", "sta"):
                 report_paths = [run_dir / "qor.rpt", run_dir / "area.rpt", run_dir / "timing.rpt", run_dir / "constraints.rpt"]
                 result["qor"] = parse_qor(report_paths)
+                metrics.update(result["qor"])
+                if args.flow == "synth":
+                    result["power"] = parse_power(run_dir / "power.rpt")
+                    result["power"]["provenance"] = options.get("power_provenance")
+                    result["power"]["activity_file"] = options.get("activity_file")
+                    metrics["power"] = result["power"]
                 required_metrics = ("area", "wns", "tns") if args.flow == "synth" else ("wns", "tns")
                 if execute and any(result["qor"].get(key) is None for key in required_metrics):
                     result["status"] = "BLOCKED"
+                    result["error_class"] = "METRIC_MISSING"
                     result["reason"] = "required QoR metrics could not be parsed from reports"
+                if execute and args.flow == "synth" and options.get("activity_file") and not any(
+                        result["power"].get(key) is not None for key in ("total_dynamic_power", "cell_leakage_power", "total_power")):
+                    result["status"] = "BLOCKED"
+                    result["error_class"] = "METRIC_MISSING"
+                    result["reason"] = "SAIF was configured but DC power metrics could not be parsed"
+            if args.flow in ("sim", "regression"):
+                coverage_record = next((item for item in records if item.get("name") == "coverage_summary"), None)
+                if coverage_record and coverage_record.get("metrics"):
+                    result["coverage"] = coverage_record["metrics"]
+                    metrics["coverage"] = result["coverage"]
+                test_results = [item for item in records if item.get("kind") == "simulation_result" or item.get("test_name") is not None and item.get("name", "").startswith("result_")]
+                if test_results:
+                    metrics["regression"] = {"tests_total": len(test_results),
+                                              "tests_passed": sum(1 for item in test_results if item.get("status") == "PASS"),
+                                              "tests_failed": sum(1 for item in test_results if item.get("status") == "FAIL"),
+                                              "seeds": [item.get("seed") for item in test_results]}
+            result["metrics"] = metrics
+            metrics_path = run_dir / "metrics.json"
+            save(metrics_path, {"schema_version": 1, "run_id": run_id, "flow": args.flow,
+                                "status": result["status"], "metrics": metrics,
+                                "tool_versions": result.get("tool_versions", {}),
+                                "source_revision": result.get("source_revision")})
+            result.setdefault("artifacts", []).append(artifact_record(metrics_path))
         except ConfigError as exc:
-            result = {"run_id": run_id, "flow": args.flow, "status": "BLOCKED", "error": str(exc)}
+            result = {"run_id": run_id, "flow": args.flow, "status": "BLOCKED",
+                      "error_class": "CONFIG_INVALID", "error": str(exc)}
         save(run_dir / "manifest.json", result)
         print(json.dumps(result, indent=2))
         return 0 if not (args.command == "run" and args.execute and not args.dry_run) or result["status"] == "PASS" else 1
@@ -386,7 +458,8 @@ def main():
                   "tool": tool, "support": support, "command": command,
                   "generated_script": str(script) if script else None,
                   "reason": "no validated executable adapter is available for this flow" if execute else None,
-                  "environment": {"license_configured": bool(os.environ.get("LM_LICENSE_FILE") or os.environ.get("SNPSLMD_LICENSE_FILE"))}}
+                  "error_class": "ADAPTER_UNSUPPORTED" if execute else None,
+                  "environment": {"license_server_environment_set": bool(os.environ.get("LM_LICENSE_FILE") or os.environ.get("SNPSLMD_LICENSE_FILE"))}}
         save(run_dir / "manifest.json", result)
         print(json.dumps(result, indent=2))
         return 1 if execute else 0

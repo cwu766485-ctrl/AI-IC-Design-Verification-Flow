@@ -1,6 +1,6 @@
 # AI IC Design Verification Flow
 
-Three complementary Codex skills for building AI-native chip design and verification repositories, writing concise repository instructions, and running reproducible Synopsys EDA workflows.
+Three core Codex skills for building AI-native chip design and verification repositories, writing concise repository instructions, and running reproducible Synopsys EDA workflows, plus the existing separately scoped RTL/PPA optimization skill.
 
 ## Skills
 
@@ -16,7 +16,7 @@ Use $organize-chip-project to inspect and safely organize this chip design and v
 
 ### `eda-tool-engineering`
 
-Provide a project-independent command interface over a project's `eda.yaml`. Executable adapters currently cover VCS simulation, URG coverage extraction, Design Compiler synthesis, and PrimeTime STA. Other listed EDA flows retain planning or script-generation interfaces until their execution and evidence checks are validated. Generated commands, logs, and results stay under `runs/`.
+Provide a project-independent command interface over a project's `eda.yaml`. Executable adapters cover VCS compile/simulation/regression, URG code and functional coverage extraction, Design Compiler synthesis, and PrimeTime STA. Verdi debug database artifacts are inventoried; the Verdi GUI is not launched. Other listed EDA flows remain planning-only or unsupported until their execution and evidence checks are validated. Generated commands, logs, run manifests, and metrics stay under `runs/`.
 
 Example:
 
@@ -25,8 +25,9 @@ Use $eda-tool-engineering to inspect this project's eda.yaml, validate the envir
 ```
 
 See the [EDA adapter capability matrix](docs/eda-adapter-capabilities.md) for
-required inputs and passing evidence. Dry-run and planning results are
-`NOT_RUN`; they are not verification results.
+required inputs and passing evidence, and the [M0 tool capability matrix](docs/tool-capability-matrix.md)
+for host installation/license/configuration/test status. Dry-run and planning
+results are `NOT_RUN`; they are not verification results.
 
 ### `write-agents-md`
 
@@ -38,6 +39,10 @@ Example:
 Use $write-agents-md to inspect this repository and create an actionable AGENTS.md under 150 lines.
 ```
 
+### `rtl-ppa-optimization`
+
+The existing PPA campaign skill provides a separate baseline/candidate workflow. Its target-project PPA and optimization acceptance remain unverified until a project-specific baseline, constraints, and Synopsys evidence are available; this M0/M1 increment does not extend that skill.
+
 The two skills work together: `organize-chip-project` establishes the repository's knowledge and execution surfaces, while `eda-tool-engineering` supplies the reproducible EDA execution layer. When an organized project contains `eda.yaml`, the organizer directs the agent to use the EDA skill rather than creating a competing flow.
 
 ## Install
@@ -48,6 +53,7 @@ Copy or symlink the skill directories into `${CODEX_HOME:-$HOME/.codex}/skills/`
 skills/eda-tool-engineering
 skills/organize-chip-project
 skills/write-agents-md
+skills/rtl-ppa-optimization
 ```
 
 Restart or reload Codex skill discovery if the new skills are not visible immediately.
