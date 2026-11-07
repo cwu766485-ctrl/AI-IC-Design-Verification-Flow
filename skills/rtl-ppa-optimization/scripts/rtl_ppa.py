@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run bounded RTL candidate evaluations in isolated source snapshots."""
 import argparse
+import datetime
 import fcntl
 import fnmatch
 import glob
@@ -15,6 +16,11 @@ import sys
 import tarfile
 import time
 from pathlib import Path
+
+EDA_SCRIPTS = Path(__file__).resolve().parents[2] / "eda-tool-engineering" / "scripts"
+if str(EDA_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(EDA_SCRIPTS))
+from stage_runtime import make_stage_input, run_process, save_json, validate_stage_result
 
 
 STATUSES = {"PASS", "FAIL", "ERROR", "BLOCKED", "NOT_RUN", "SKIPPED"}
@@ -540,21 +546,64 @@ def run_stage(stage, project_root, run_dir, candidate_root, source_manifest_path
     env["PWD"] = str(cwd)
     if seed is not None:
         env["SEED"] = str(seed)
+        stage_environment = {key: env[key] for key in (
+            "RTL_PPA_PROJECT_ROOT", "RTL_PPA_SOURCE_ROOT", "RTL_PPA_RUN_DIR",
+            "RTL_PPA_SOURCE_MANIFEST", "RTL_PPA_MODE", "RTL_PPA_CAMPAIGN_ID", "PWD", "SEED")
+            if key in env}
     log_path = stage_dir / "command.log"
     started = time.time()
     status, return_code, reason = "PASS", None, None
     try:
-        with log_path.open("w") as log:
-            result = subprocess.run(argv, cwd=str(cwd), env=env, stdout=log,
-                                    stderr=subprocess.STDOUT, timeout=stage.get("timeout_sec", 1800))
-        return_code = result.returncode
+        expected_artifacts = [str(stage_artifact_path(value, mapping, stage_dir, "expected artifact"))
+                              for value in stage.get("expected_artifacts", [])]
+        try:
+            source_data = json.loads(Path(source_manifest_path).read_text())
+            source_revision = source_data.get("source_revision", "unknown")
+        except (OSError, ValueError):
+            source_data = {}
+            source_revision = "unknown"
+        read_only_assets = source_data.get("read_only_assets", [])
+        constraints = [{"path": item["target"], "sha256": item["sha256"]}
+                       for item in read_only_assets if str(item.get("target", "")).lower().endswith(".sdc")]
+        libraries = [{"path": item["target"], "sha256": item["sha256"]}
+                     for item in read_only_assets if Path(str(item.get("target", ""))).suffix.lower()
+                     in (".db", ".lib", ".ndm", ".lef")]
+        stage_input = make_stage_input(
+            run_id=run_dir.name, stage_id=stage["id"], stage_kind=stage.get("kind", "ppa"),
+            adapter_id=stage.get("adapter_id", "project.ppa.%s.v1" % stage["id"]),
+            project={"name": source_data.get("project", Path(project_root).name),
+                     "source_revision": source_revision,
+                     "source_tree_sha256": hash_tree(candidate_root),
+                     "design_top": source_data.get("design_top"),
+                     "testbench_top": source_data.get("testbench_top"),
+                     "ordered_sources": source_data.get("rtl_sources", []),
+                     "constraints": constraints, "libraries": libraries},
+            argv=argv, cwd=cwd, output_dir=stage_dir, expected_artifacts=expected_artifacts,
+            dependencies=stage.get("requires", []), timeout=stage.get("timeout_sec", 1800),
+            seed=seed, environment=stage_environment,
+            budget_seconds=stage.get("remaining_budget_sec", float("inf")),
+            input_artifacts=([{"path": str(source_manifest_path), "sha256": sha256(source_manifest_path)}] +
+                             [{"path": str(candidate_root / name), "sha256": digest}
+                              for name, digest in source_data.get("source_hashes", {}).items()
+                              if (candidate_root / name).is_file()] +
+                             [{"path": str(candidate_root / item.get("target", "")), "sha256": item["sha256"]}
+                              for item in source_data.get("read_only_assets", [])
+                              if isinstance(item, dict) and item.get("target") and item.get("sha256")]))
+        save_json(stage_dir / "runtime-stage-input.v1.json", stage_input)
+        process_record = run_process(stage_input, cwd=str(cwd), env=env, log_path=log_path,
+                                     execute=True, adapter_supported=stage.get("adapter_supported", True))
+        return_code = process_record["return_code"]
         log_text = read_text(log_path, errors="replace")
         license_missing = re.search(r"license.{0,40}(fail|denied|unavailable|checkout)|failed to obtain.{0,40}license", log_text, re.I)
         fail_patterns = [x for x in stage.get("fail_patterns", []) if re.search(x, log_text)]
         missing_patterns = [x for x in stage.get("pass_patterns", []) if not re.search(x, log_text)]
         result_file = stage_artifact_path(stage["result_json"], mapping, stage_dir,
                                           "stage result JSON")
-        if license_missing:
+        if process_record["status"] == "BLOCKED":
+            status, reason = "BLOCKED", process_record.get("message") or "shared stage runtime blocked execution"
+        elif process_record["status"] == "ERROR":
+            status, reason = "ERROR", process_record.get("message") or "shared stage runtime execution error"
+        elif license_missing:
             status, reason = "BLOCKED", "EDA license unavailable"
         elif return_code != 0:
             status = "FAIL"
@@ -646,6 +695,9 @@ def run_stage(stage, project_root, run_dir, candidate_root, source_manifest_path
               "campaign_id": run_dir.name, "status": status, "return_code": return_code,
               "elapsed_sec": elapsed, "command": argv, "cwd": str(cwd),
               "log": str(log_path), "reason": reason, "seed": seed}
+    if "process_record" in locals():
+        record["runtime_status"] = process_record.get("status")
+        record["runtime_error_class"] = process_record.get("error_class")
     if status == "PASS":
         record["result_json"] = str(result_file)
         record["metrics"] = data.get("metrics", {})
@@ -657,6 +709,43 @@ def run_stage(stage, project_root, run_dir, candidate_root, source_manifest_path
         record["artifact_manifest"] = artifact_records + [
             {"path": "result_json", "kind": "file", "size_bytes": result_file.stat().st_size,
              "sha256": sha256(result_file)}]
+    try:
+        contract_artifacts = []
+        for item in record.get("artifact_manifest", []):
+            digest = item.get("sha256")
+            if digest:
+                contract_artifacts.append({"path": item.get("path", ""),
+                                           "kind": item.get("kind", "file"),
+                                           "size_bytes": item.get("size_bytes", 0),
+                                           "sha256": digest, "producer_stage": stage["id"],
+                                           "role": "stage_output"})
+        try:
+            source_revision = json.loads(Path(source_manifest_path).read_text()).get("source_revision", "unknown")
+        except (OSError, ValueError):
+            source_revision = "unknown"
+        status_error = record.get("runtime_error_class") or ("COMMAND_FAILED" if status == "FAIL" else
+                        "STAGE_BLOCKED" if status == "BLOCKED" else "INTERNAL_ERROR" if status == "ERROR" else None)
+        contract_result = {"contract_version": "1.0", "run_id": run_dir.name,
+                           "stage_id": stage["id"], "status": status,
+                           "error_class": status_error, "adapter_id": stage_input["adapter_id"],
+                           "adapter_supported": stage.get("adapter_supported", True),
+                           "exit_code": return_code,
+                           "started_at": datetime.datetime.fromtimestamp(started, datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+                           "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+                           "source_revision": source_revision,
+                           "tool_versions": record.get("tool_versions", {}),
+                           "metrics": record.get("metrics", {}),
+                           "metric_provenance": record.get("metric_provenance", {}),
+                           "artifacts": contract_artifacts,
+                           "message": reason}
+        validate_stage_result(contract_result)
+        save_json(stage_dir / "runtime-stage-result.v1.json", contract_result)
+        record["runtime_stage_result"] = str(stage_dir / "runtime-stage-result.v1.json")
+        record["runtime_stage_result_sha256"] = sha256(stage_dir / "runtime-stage-result.v1.json")
+    except (OSError, ValueError, TypeError) as exc:
+        if status == "PASS":
+            status, reason = "ERROR", "canonical result contract validation failed: " + str(exc)
+            record.update(status=status, reason=reason)
     (stage_dir / "runner-record.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     return record
 
@@ -990,6 +1079,7 @@ def _execute_campaign_locked(args, mode):
             break
         bounded_stage = dict(stage)
         bounded_stage["timeout_sec"] = min(float(stage.get("timeout_sec", 1800)), remaining)
+        bounded_stage["remaining_budget_sec"] = remaining
         try:
             record = run_stage(bounded_stage, root, output, snapshot, source_manifest,
                                effective_seed, mode)

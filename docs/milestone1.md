@@ -1,8 +1,12 @@
 # M0/M1 audit, validation, and limitations
 
-This increment strengthens the existing `eda-tool-engineering` implementation.
-It preserves `organize-chip-project`, `write-agents-md`, and the existing PPA
-skill. It does not implement the M2 verification agent or M3 optimization loop.
+This document records the M0/M1 adapter audit and local smoke. The R1
+continuation adds the shared sequential stage runtime, documented in the
+[execution contract](architecture/unified-execution-contract.md) and
+[efficiency report](r1-efficiency-report.md). It preserves
+`organize-chip-project`, `write-agents-md`, and the existing PPA campaign
+policy. It does not implement the M2 verification agent or autonomous M3
+optimization loop.
 
 ## Repository and environment audit
 
@@ -34,9 +38,10 @@ adapter scripts, report parsers, and existing pytest/unittest coverage.
 ## Implementation and compatibility
 
 The canonical `eda.py` CLI retains `doctor`, `plan`, `run`, `resume`, `report`,
-and `validate`. The root `aicflow` command is a compatibility wrapper into that
-CLI. Existing planning interfaces remain; unsupported `run --execute` flows
-return `BLOCKED` rather than a false PASS.
+and `validate`. The root `aicflow` command composes sequential stage DAGs;
+`eda.py` forwards compatible composite-flow requests. Existing planning
+interfaces remain; unsupported `run --execute` flows return `BLOCKED` rather
+than a false PASS.
 
 Implemented execution slice:
 
@@ -68,20 +73,23 @@ The tests use fake executables and fixture reports; these tests do not claim
 Synopsys validation.
 
 ```bash
-/tmp/rtl-ppa-test-venv/bin/python -m pytest -q tests
-python3.12 -m py_compile \
+python3 -m pip install -r requirements-test.txt
+python3 -m pytest -q tests
+python3 -m py_compile \
   skills/eda-tool-engineering/scripts/eda.py \
   skills/eda-tool-engineering/scripts/eda_runtime.py \
+  skills/eda-tool-engineering/scripts/flow_engine.py \
   skills/eda-tool-engineering/scripts/eda_runner.py \
+  skills/eda-tool-engineering/scripts/stage_runtime.py \
+  skills/rtl-ppa-optimization/scripts/rtl_ppa.py \
   skills/eda-tool-engineering/scripts/check_environment.py
 git diff --check
 ```
 
-Latest Python-only result: **49 passed** using
-`/tmp/rtl-ppa-test-venv/bin/python -m pytest -q tests`. `python3.12 -m
-py_compile` on the EDA scripts and `git diff --check` also passed. The
-GitHub Actions workflow runs the same pytest suite without licensed EDA tools;
-its result is reported separately after the branch update.
+Latest Python-only result: **65 passed**. Python compilation, schema JSON
+parsing, and `git diff --check` also passed. The GitHub Actions workflow runs
+the suite without licensed EDA tools; its result is reported separately after
+the branch update.
 
 ## Real local Synopsys smoke
 
@@ -106,6 +114,12 @@ compile-time design metadata alongside per-seed VDBs. No target product PDK,
 project timing corner, production RTL, Verdi GUI, formal, CDC, or signoff
 validation is claimed.
 
+The R1 DAG runtime also passed the same owned fixture in an isolated temporary
+Git workspace copy. Current-run IDs, tool versions, statuses, metrics, and the
+VCS symlink inventory issue resolved before the final rerun are recorded in
+the [R1 execution report](r1-efficiency-report.md). This did not modify the
+original smoke workspace or commit tool outputs.
+
 ## Known limitations and next priority
 
 1. Configure an approved small reference project with its own `eda.yaml`,
@@ -115,8 +129,7 @@ validation is claimed.
    acceptance criteria. Current generic-library power output is partial.
 3. Add/validate optional Synopsys adapters (SpyGlass, VC Formal, Formality,
    DFT/ATPG, APR, StarRC) only when project setup and licenses are available.
-4. Continue the shared execution contract, stage DAG/start-end selection,
-   checkpoint/cache invalidation, and common parser work in the ordered
-   [Milestone 1 backlog](milestone1/backlog.md).
+4. Expand parser provenance and reconcile EDA/PPA cumulative budget accounting
+   as tracked in the ordered [Milestone 1 backlog](milestone1/backlog.md).
 5. Start M2 and M3 only after the approved project execution slice is
    reproducible; this delivery does not claim those agents are complete.

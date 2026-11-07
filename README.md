@@ -41,9 +41,18 @@ Use $write-agents-md to inspect this repository and create an actionable AGENTS.
 
 ### `rtl-ppa-optimization`
 
-The existing PPA campaign skill provides a separate baseline/candidate workflow. Its target-project PPA and optimization acceptance remain unverified until a project-specific baseline, constraints, and Synopsys evidence are available; this M0/M1 increment does not extend that skill.
+The existing PPA campaign skill provides a separate baseline/candidate workflow. R1 routes its EDA command execution through the shared stage runtime while preserving candidate policy. Its target-project PPA and optimization acceptance remain unverified until a project-specific baseline, constraints, and Synopsys evidence are available; an autonomous RTL candidate-generation loop is not implemented here.
 
 The two skills work together: `organize-chip-project` establishes the repository's knowledge and execution surfaces, while `eda-tool-engineering` supplies the reproducible EDA execution layer. When an organized project contains `eda.yaml`, the organizer directs the agent to use the EDA skill rather than creating a competing flow.
+
+The R1 unified runtime preserves `eda.py` and `rtl_ppa.py` while routing EDA
+and PPA tool commands through a shared Stage Input/Result contract. The
+repository-root `./aicflow` wrapper composes sequential VCS/URG and DC/PrimeTime
+stage graphs, supports dependency-aware `--from`/`--to`, verified checkpoints,
+resume, and bounded log excerpts. See
+[`docs/architecture/unified-execution-contract.md`](docs/architecture/unified-execution-contract.md)
+for the implemented interface and limitations. The Python mock demo is not
+Synopsys validation; licensed smoke evidence is reported separately.
 
 ## Install
 
@@ -67,3 +76,15 @@ Restart or reload Codex skill discovery if the new skills are not visible immedi
 - Real tool execution requires explicit `--execute` and valid local tools, licenses, libraries, PDKs, and project configuration.
 
 Tool availability and a generated command plan do not prove design correctness or signoff. Always review project configuration and verification evidence.
+
+## Python tests
+
+The Python-only test dependencies are listed in `requirements-test.txt`:
+
+```bash
+python3 -m pip install -r requirements-test.txt
+python3 -m pytest -q tests
+```
+
+These tests use fake EDA executables where needed; they do not require a
+license and do not count as Synopsys tool validation.

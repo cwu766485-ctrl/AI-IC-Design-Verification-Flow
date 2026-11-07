@@ -211,6 +211,10 @@ def test_successful_baseline_candidate_and_snapshot_isolation(project, tmp_path)
     stage = evidence["stages"][0]
     assert stage["adapter_id"] == "test.synthesis.v1"
     assert stage["metric_provenance"]["cell_area"]["parser_version"] == "1"
+    stage_input = json_doc(Path(stage["log"]).parent / "runtime-stage-input.v1.json")
+    assert stage_input["environment"]["RTL_PPA_SOURCE_ROOT"] == str(runs / "area_candidate/source")
+    assert stage_input["environment"]["SEED"] == "0"
+    assert not any("LICENSE" in key.upper() for key in stage_input["environment"])
     assert str(project) not in " ".join(stage["command"])
     assert str(runs / "area_candidate/source") in " ".join(stage["command"])
     assert stage["artifact_manifest"]

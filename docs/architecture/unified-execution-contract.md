@@ -1,297 +1,75 @@
-# Unified Stage Execution Contract (Proposal)
+# Unified Stage Execution Contract — R1
 
-**Status:** design proposal for review. This document does not add or migrate a
-runner. The current `eda-tool-engineering/scripts/eda.py` CLI and
-`rtl-ppa-optimization/scripts/rtl_ppa.py` remain in place for this iteration.
+**Status:** implemented for sequential execution in the R1 branch. This document describes current behavior and limits; it is not a signoff claim.
 
-## One execution core, two compatibility surfaces
+## Shared runtime and compatibility surfaces
 
-Use one future `aicflow` execution core for deterministic stage setup, process
-launch, status classification, evidence collection, checkpointing, and cache
-decisions. Keep responsibilities distinct:
+`aicflow`/`flow_engine.py` composes and schedules the EDA stage graph. The existing `eda.py` CLI remains available: composite-flow, partial-stage, resume, and report requests are forwarded to that engine. Existing single-flow adapter setup remains in `eda.py`, and execution is handled through `eda_runtime.execute_plan`.
 
-- `eda.py` remains the compatible EDA skill CLI. Its existing commands map to
-  canonical stages and call the shared runtime. Existing scripts, options, and
-  exit codes get compatibility tests before the implementation moves.
-- `rtl_ppa.py` remains the PPA campaign interface. It owns baseline/candidate
-  lifecycle, patch scope, candidate budgets, metric comparison, and decision
-  records. It submits its configured stages to the shared runtime instead of
-  maintaining another process launcher or evidence format.
-- Project adapters translate a canonical stage request into VCS, URG, DC,
-  Formality, or project-specific commands. They report what they did and the
-  evidence they produced; the core does not infer unsupported capabilities.
+`rtl_ppa.py` remains the PPA campaign interface. It owns candidate snapshots, patch allowlists, candidate selection, metric gates, and campaign budgets. It creates the same Stage Input/Result documents and calls `stage_runtime.run_process` for EDA commands. Its candidate policy checks stay outside the shared runtime. PPA campaigns do not yet use the general EDA DAG cache.
 
-The shared runtime must not make each Skill an independent flow engine. A stage
-request is a pure input document plus a selected snapshot; the same request
-validator, argv launcher, timeout handling, artifact hasher, result parser,
-budget ledger, and checkpoint verifier are used from either CLI.
+[`stage_runtime.py`](../../skills/eda-tool-engineering/scripts/stage_runtime.py) contains strict Python validators, argv-based subprocess execution, timeout and license/tool classification, content hashing, DAG validation, atomic JSON writes, and cache locking. Versioned schemas: [`Stage Input v1`](../schemas/stage-input.v1.schema.json) and [`Stage Result v1`](../schemas/stage-result.v1.schema.json).
 
-## Stage input contract
+## Stage Input v1
 
-The persisted input is JSON (`stage-input.json`); YAML plans are parsed before
-this boundary. Paths in the contract are relative to an immutable source
-snapshot, an explicitly mounted read-only asset, or the stage output directory.
-The core must reject path escapes and never pass the original editable project
-root as the work directory.
+The runtime writes `stage_contracts/<stage-id>.input.v1.json` for each node. Required fields: `contract_version`, `run_id`, `stage_id`, `stage_kind`, `adapter_id`, `project`, `argv`, `environment`, `working_directory`, `output_directory`, `expected_artifacts`, `dependencies`, `timeout_seconds`, and `budgets.run_remaining_seconds`. `input_artifacts` and `seed` are optional. Unknown top-level and project fields are rejected.
 
-```json
-{
-  "contract_version": "1.0",
-  "run_id": "run-2026-11-07-001",
-  "stage_id": "vcs_simulate",
-  "stage_kind": "simulation",
-  "adapter_id": "project.vcs.simulation.v1",
-  "project": {
-    "name": "block-a",
-    "source_revision": "<git-sha>",
-    "source_tree_sha256": "<digest>",
-    "design_top": "block_top",
-    "testbench_top": "tb_block_top",
-    "ordered_sources": ["rtl/pkg.sv", "rtl/block_top.sv", "dv/tb.sv"],
-    "includes": ["rtl/include"],
-    "defines": {"SIMULATION": "1"},
-    "constraints": [{"path": "assets/block.sdc", "sha256": "<digest>"}],
-    "libraries": [{"path": "assets/slow.db", "sha256": "<digest>"}]
-  },
-  "argv": ["vcs", "-top", "tb_block_top", "-f", "inputs/sources.f"],
-  "environment": {"SEED": "17"},
-  "working_directory": ".",
-  "input_artifacts": [{"path": "source_manifest.json", "sha256": "<digest>"}],
-  "output_directory": "stages/vcs_simulate",
-  "expected_artifacts": ["simv", "simulation.log", "simulation-result.json"],
-  "dependencies": ["vcs_compile"],
-  "seed": 17,
-  "timeout_seconds": 1800,
-  "budgets": {"run_remaining_seconds": 4200, "candidate_remaining": 2}
-}
+`project` includes source revision, content-derived source tree hash, ordered RTL sources, design/testbench tops when known, filelists, include paths, defines, and hashed SDC/library assets. Paths are resolved local paths. EDA flows execute against the current project worktree; the shared EDA runtime does not create immutable snapshots. PPA separately creates candidate snapshots and rejects commands referencing the original project path.
+
+Commands are argv arrays, not shell strings. Credentials remain in the process environment and are not serialized; the validator rejects environment keys that look like license, token, password, secret, or credential fields. The EDA adapter currently leaves the explicit environment map empty and inherits its process environment; selected tool environment variables are hashed into cache keys.
+
+## Stage Result v1 and status model
+
+The runtime writes `stage_contracts/<stage-id>.result.v1.json` with status, error class, adapter identity/support, exit code, timestamps, source revision, tool versions when known, metrics/provenance, artifact hashes, and a message.
+
+Statuses: `PASS`, `FAIL`, `ERROR`, `BLOCKED`, `NOT_RUN`, `SKIPPED`. `PASS` requires a supported adapter, exit code zero, and at least one hashed artifact. Tool stages also block when the version is unavailable or required reports are missing. Internal bookkeeping stages may have no tool version. A dry run is `NOT_RUN`; unsupported adapters, missing tools/licenses/reports, and exhausted budgets are `BLOCKED`; nonzero tool exits are `FAIL` unless classified as an environment/license block. Dependents of non-PASS nodes become `SKIPPED` with `DEPENDENCY_FAILED`. These statuses never mean signoff.
+
+Common error classes include `TOOL_UNAVAILABLE`, `LICENSE_UNAVAILABLE`, `ADAPTER_UNSUPPORTED`, `COMMAND_FAILED`, `TIMEOUT`, `DESIGN_CHECK_FAILED`, `REPORT_MISSING`, `REPORT_INCOMPLETE`, `VERSION_UNAVAILABLE`, `DEPENDENCY_FAILED`, `BUDGET_EXHAUSTED`, and `STAGE_CONTRACT_INVALID`.
+
+## Current DAGs and CLI
+
+Stage IDs and dependencies are validated for uniqueness, missing/duplicate edges, and cycles. The scheduler uses deterministic topological order and sequential execution; independent branches are not parallelized.
+
+| Flow | Stage relationship |
+|---|---|
+| `rtl_to_sim` | `vcs_compile` → simulation → result classification |
+| `rtl_to_regression` | compile → each test/seed simulation and result → URG → coverage summary |
+| `rtl_to_synth_sta` | `dc_synthesis` → `pt_sta` |
+| `rtl_to_sim_synth` | verification and synthesis branches share one run manifest/cache |
+
+Single-flow names (`sim`, `regression`, `coverage`, `synth`, `sta`) remain available. Run from a project with a valid `eda.yaml`:
+
+```bash
+./aicflow doctor
+./aicflow plan --flow rtl_to_regression
+./aicflow run --flow rtl_to_regression --execute
+./aicflow run --flow rtl_to_sim_synth --from vcs_compile --to dc_synthesis --execute
+./aicflow resume --run-id <run-id> --execute
+./aicflow report --run-id <run-id> --log-tail 50
 ```
 
-Required input fields are the contract version, run/stage IDs, stage kind,
-adapter ID, source revision and effective source manifest, argv, working and
-output directories, dependency IDs, timeout, and remaining budgets. EDA
-settings such as top names, file order, include paths, defines, SDC, libraries,
-operating conditions, and seed are explicit when relevant to that stage. Secrets
-and license credentials are references from the execution environment, never
-serialized into the request or evidence JSON.
+`--from`/`--to` select a topological interval. Required ancestors are included and must pass or be restored from a verified checkpoint/cache. `plan` and runs without `--execute` do not launch tools. Existing `eda.py` entry points forward the new options for supported composite flows.
 
-The adapter receives argv as an array, not a shell string. Shell use is permitted
-only when an adapter explicitly declares and validates that behavior. Tool
-install paths and mounted asset paths are distinct fields so the runtime can
-audit what a command reads.
+An `eda.yaml` with `runner.kind: ssh` sends composite `run` and `resume` execution through the existing SSH runner after its matching-clean-checkout preflight. The selected flow slice and run budget are forwarded; remote evidence is copied back and annotated. `EDA_REMOTE_EXECUTION=1` prevents recursive re-dispatch on the remote host. SSH routing has fake-command tests but was not exercised against a real remote host.
 
-### Stage input JSON Schema (v1)
+Each run writes `runs/<run-id>/manifest.json`, `checkpoint.json`, `stage_contracts/`, scripts/logs/reports, and `attempts.jsonl`. `report --log-tail [N]` includes at most 200 lines per log and 1000 characters per line; complete logs remain in their artifacts.
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:aicflow:stage-input:1.0",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["contract_version", "run_id", "stage_id", "stage_kind", "adapter_id", "project", "argv", "working_directory", "output_directory", "expected_artifacts", "dependencies", "timeout_seconds", "budgets"],
-  "properties": {
-    "contract_version": {"const": "1.0"},
-    "run_id": {"type": "string", "minLength": 1},
-    "stage_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
-    "stage_kind": {"type": "string", "minLength": 1},
-    "adapter_id": {"type": "string", "minLength": 1},
-    "project": {
-      "type": "object",
-      "required": ["name", "source_revision", "source_tree_sha256", "ordered_sources"],
-      "properties": {
-        "name": {"type": "string"},
-        "source_revision": {"type": "string"},
-        "source_tree_sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"},
-        "design_top": {"type": "string"},
-        "testbench_top": {"type": "string"},
-        "ordered_sources": {"type": "array", "items": {"type": "string"}},
-        "includes": {"type": "array", "items": {"type": "string"}},
-        "defines": {"type": "object", "additionalProperties": {"type": "string"}},
-        "constraints": {"$ref": "#/$defs/hashed_inputs"},
-        "libraries": {"$ref": "#/$defs/hashed_inputs"}
-      },
-      "additionalProperties": true
-    },
-    "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
-    "environment": {"type": "object", "additionalProperties": {"type": "string"}},
-    "working_directory": {"type": "string", "minLength": 1},
-    "input_artifacts": {"$ref": "#/$defs/hashed_inputs"},
-    "output_directory": {"type": "string", "minLength": 1},
-    "expected_artifacts": {"type": "array", "items": {"type": "string"}},
-    "dependencies": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
-    "seed": {"type": ["integer", "null"]},
-    "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
-    "budgets": {"type": "object", "required": ["run_remaining_seconds"], "properties": {"run_remaining_seconds": {"type": "number", "minimum": 0}, "candidate_remaining": {"type": "integer", "minimum": 0}}, "additionalProperties": false}
-  },
-  "$defs": {
-    "hashed_input": {"type": "object", "required": ["path", "sha256"], "properties": {"path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}}, "additionalProperties": false},
-    "hashed_inputs": {"type": "array", "items": {"$ref": "#/$defs/hashed_input"}}
-  }
-}
-```
+## Checkpoint, cache, invalidation, and budget
 
-## Stage result and status schema
+The scheduler atomically writes a checkpoint and validated input/result JSON after every stage. Only PASS stages with recorded artifacts are cached. The cache at `runs/.cache/stages/` is protected by a POSIX file lock. A per-run lock serializes concurrent resume/execution requests and refreshes the checkpoint while holding the lock, preventing duplicate launches and budget races. Before reuse, all files/tree hashes are verified. A cache hit restores every recorded run-local output, including logs consumed by downstream classifiers. Artifacts outside the source run tree and symlinks are not cacheable.
 
-Every launched stage writes `stage-result.json`; the runner also writes its
-authoritative `runner-record.json`. The adapter result describes tool-level
-outcome. The runner record adds process exit, timestamps, final classification,
-and verified artifact hashes.
+Cache keys include stage/adapter identity and version, normalized argv, timeout, seed/test/options, source/config/RTL/filelist/include/constraint/library content hashes, selected tool environment hashes and executable fingerprint/version, and upstream artifact hashes. A changed input or output hash forces a rerun. Failed, blocked, dry-run, and artifact-less results never become cache hits. Cache hits and same-run checkpoint reuse are reported separately.
 
-```json
-{
-  "contract_version": "1.0",
-  "run_id": "run-2026-11-07-001",
-  "stage_id": "vcs_simulate",
-  "status": "PASS",
-  "error_class": null,
-  "adapter_id": "project.vcs.simulation.v1",
-  "adapter_supported": true,
-  "exit_code": 0,
-  "started_at": "2026-11-07T08:00:00Z",
-  "finished_at": "2026-11-07T08:00:08Z",
-  "source_revision": "<git-sha>",
-  "tool_versions": {"vcs": "V-2026.06"},
-  "metrics": {},
-  "metric_provenance": {},
-  "artifacts": [{
-    "path": "simulation.log",
-    "kind": "file",
-    "size_bytes": 2841,
-    "sha256": "<digest>",
-    "producer_stage": "vcs_simulate",
-    "role": "required_report"
-  }],
-  "message": null
-}
-```
+Resume verifies the prior Stage Input/Result JSON hashes and output hashes. Invalid or failed nodes rerun only on explicit `resume --execute`; prior attempts remain in append-only `attempts.jsonl`. Completed elapsed time is charged cumulatively across resume; an interrupted attempt without a finish record is charged its reserved timeout. Resume can retain or lower an existing budget. Cache reuse does not consume EDA time budget.
 
-Status enum: `PASS`, `FAIL`, `ERROR`, `BLOCKED`, `NOT_RUN`, `SKIPPED`.
-`PASS` means the adapter declared support, process exit succeeded, required
-markers and reports were present, and the runner validated every required
-artifact. It does not mean design or verification signoff. An unsupported
-adapter must return `BLOCKED`; a dry run is `NOT_RUN`; downstream work whose
-dependency did not pass is `SKIPPED`.
+## Provenance and efficiency
 
-Recommended `error_class` values are `CONFIG_INVALID`, `SOURCE_MISSING`,
-`TOOL_UNAVAILABLE`, `LICENSE_UNAVAILABLE`, `ADAPTER_UNSUPPORTED`,
-`COMMAND_FAILED`, `TIMEOUT`, `REPORT_MISSING`, `ARTIFACT_INVALID`,
-`METRIC_MISSING`, `DEPENDENCY_FAILED`, `BUDGET_EXHAUSTED`,
-`CHECKPOINT_INVALID`, and `INTERNAL_ERROR`. Preserve the raw exit code and
-message; never turn a missing report, timeout, unsupported adapter, or nonzero
-exit into `PASS`.
+Run manifests record Git revision/working-tree state, project inputs, stage order, commands, tool versions, statuses, artifacts, and parsed QoR. Artifact records contain path, kind, size, hash, producer, and role. Metric provenance is included when the parser provides report details; complete line/section/unit provenance is not yet available for every parser.
 
-### Stage result JSON Schema (v1)
+Efficiency records total workflow time, EDA stage time, stage count, tool invocations, cache hits, and checkpoint reuse. `agent_invocations` and `token_usage` are `null` because the runtime has no Codex telemetry. PPA per-candidate and cumulative search budgets remain in the PPA ledger and are passed as remaining stage budget to the common process runner; they are not yet one transactional ledger with general EDA run budgets.
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:aicflow:stage-result:1.0",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["contract_version", "run_id", "stage_id", "status", "error_class", "adapter_id", "adapter_supported", "exit_code", "started_at", "finished_at", "source_revision", "tool_versions", "metrics", "metric_provenance", "artifacts", "message"],
-  "properties": {
-    "contract_version": {"const": "1.0"},
-    "run_id": {"type": "string"},
-    "stage_id": {"type": "string"},
-    "status": {"enum": ["PASS", "FAIL", "ERROR", "BLOCKED", "NOT_RUN", "SKIPPED"]},
-    "error_class": {"type": ["string", "null"]},
-    "adapter_id": {"type": "string", "minLength": 1},
-    "adapter_supported": {"type": "boolean"},
-    "exit_code": {"type": ["integer", "null"]},
-    "started_at": {"type": "string", "format": "date-time"},
-    "finished_at": {"type": "string", "format": "date-time"},
-    "source_revision": {"type": "string"},
-    "tool_versions": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
-    "metrics": {"type": "object", "additionalProperties": {"type": ["number", "object"]}},
-    "metric_provenance": {"type": "object", "additionalProperties": {"type": "object", "required": ["artifact", "parser_id", "parser_version"], "properties": {"artifact": {"type": "string"}, "parser_id": {"type": "string", "minLength": 1}, "parser_version": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
-    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
-    "message": {"type": ["string", "null"]}
-  },
-  "allOf": [{"if": {"properties": {"status": {"const": "PASS"}}, "required": ["status"]}, "then": {"properties": {"adapter_supported": {"const": true}, "exit_code": {"const": 0}, "tool_versions": {"minProperties": 1}, "artifacts": {"minItems": 1}}, "required": ["tool_versions", "artifacts"]}}],
-  "$defs": {
-    "artifact": {"type": "object", "required": ["path", "kind", "size_bytes", "sha256", "producer_stage", "role"], "properties": {"path": {"type": "string"}, "kind": {"enum": ["file", "directory"]}, "size_bytes": {"type": "integer", "minimum": 1}, "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}, "producer_stage": {"type": "string"}, "role": {"type": "string"}, "file_count": {"type": "integer", "minimum": 1}}, "additionalProperties": false}
-  }
-}
-```
+## Tests, demo, and known limitations
 
-## Artifact manifest and provenance
+Python tests cover runtime contract validation, graph validation and selection, cache reuse/invalidation/tampering, downstream status, dry run, unsupported adapters, budget exhaustion, existing VCS/URG/DC/PT CLI behavior, and the PPA evaluator. The example at `skills/eda-tool-engineering/examples/r1_dag_smoke/` uses explicitly mocked tools: it checks orchestration/cache behavior, not RTL behavior or Synopsys.
 
-Each run has one immutable `manifest.json`. It records the contract version,
-run ID, UTC start/end, plan SHA-256, Git commit, clean-tree state, source file
-list/order and per-file hashes, design/testbench tops, constraints and library
-asset hashes, stage dependency graph, adapter IDs, tool versions, seeds,
-budgets, statuses, and a complete index of stage artifacts.
-
-Artifacts use project-relative or run-relative paths, never absolute paths as
-identity. A file entry contains `path`, `kind`, `size_bytes`, `sha256`,
-`producer_stage`, and `role`. Directory artifacts contain a deterministic tree
-hash and a sorted child manifest. Symlinks, empty required reports, paths
-outside the stage output directory, and duplicate artifact identities are
-rejected. Metrics name their source stage, source artifact, unit, and parser
-version; parsed metrics retain report line or structured path where available.
-
-## Stage dependencies and execution
-
-Represent the flow as a DAG. Each node has an ID, adapter, explicit inputs,
-outputs, and dependency IDs. Validate that IDs are unique, dependencies exist,
-and the graph is acyclic before launch. A stage runs only after every required
-dependency is `PASS`; otherwise record `SKIPPED` with the blocking dependency.
-Independent nodes may later run concurrently, but the first implementation is
-sequential for reproducibility and simple budget accounting.
-
-The selected start/end stage is a graph slice: calculate the ancestors required
-for the selected end stage, then execute only the slice from the requested
-start. Reject a start stage that omits a required ancestor unless a verified
-checkpoint supplies that dependency.
-
-## Checkpoint and resume
-
-Checkpoint after every passing stage. A checkpoint contains the immutable
-stage-input SHA-256, result JSON SHA-256, artifact manifest, dependency
-checkpoint IDs, source revision, adapter ID, and tool versions. Resume verifies
-all hashes and dependencies before reuse. A missing, edited, or incompatible
-checkpoint becomes `BLOCKED` and reruns only when the user explicitly requests
-resume with rerun enabled. Failed or partial stage output is never a checkpoint.
-
-The run manifest is append-only by stage attempt. Resume creates a new attempt
-record instead of replacing the earlier failure. This preserves provenance and
-lets a user distinguish a resumed run from a clean run.
-
-## Cache key and invalidation
-
-Cache only stage outputs with a passing result and complete artifact manifest.
-The key is a canonical hash of:
-
-- contract and adapter schema versions;
-- stage ID/kind, argv, declared environment inputs, and working directory;
-- source revision plus exact input file hashes and source ordering;
-- top names, defines, include paths, SDC, libraries, operating conditions,
-  seed, and all stage configuration;
-- adapter ID/version, executable/tool versions, and parent checkpoint hashes.
-
-Any input change invalidates the stage and its descendants. Do not key on a
-mutable tool alias such as `latest`; require an adapter-provided version string
-or binary fingerprint. License state, a command exit alone, incomplete reports,
-and failed runs are never cache hits. Cache hits remain explicit `PASS` records
-with `cache_hit: true` and the original artifact provenance.
-
-## Run and candidate budgets
-
-The shared runtime enforces per-stage timeout, per-run wall-clock limit, total
-run wall-clock limit, and optional concurrency/resource limits. The PPA campaign
-layer additionally enforces candidate count, per-candidate runtime, and
-cumulative search runtime. Account fractional monotonic elapsed time and persist
-reservations before launching work, so failed and interrupted campaigns cannot
-evade the budget. Serialize updates to a shared ledger; reject a ledger with a
-different plan hash or invalid counters. Budget exhaustion emits
-`BLOCKED/BUDGET_EXHAUSTED` and prevents downstream stages and optimization
-acceptance.
-
-## Compatibility and rollout
-
-Keep current CLI flags and exit conventions as contract tests. Implement the
-runtime in incremental layers inside the existing `aicflow` package, then make
-`eda.py` delegate stage execution and adapt `rtl_ppa.py` to call the same public
-runtime function. Do not move PPA comparison, candidate patch policy, or metric
-gates into the generic runner. Do not add a second scheduler or subprocess
-launcher to either Skill. Real Synopsys smoke tests remain separate from
-Python-only fake-adapter CI.
+The generic EDA runtime is sequential and runs against the existing project worktree on the selected local/remote host; it does not snapshot EDA inputs. Incidental top-level tool helper trees containing symlinks are listed in `omitted_artifacts`; declared stage evidence is still hashed and required outputs gate status. EDA has no shared transactional budget ledger with PPA. Formal, CDC signoff, APR, extracted power, and parasitic signoff remain unsupported or planning-only unless separately validated. Mock tests do not establish real Synopsys validation. The licensed smoke result is recorded in [`r1-efficiency-report.md`](../r1-efficiency-report.md); it is an owned-fixture smoke, not project PDK validation or design signoff.

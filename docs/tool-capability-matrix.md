@@ -75,9 +75,9 @@ version strings observed from a tool are shown.
 | Milestone | Current status | Remaining gap |
 |---|---|---|
 | M0: environment audit | **Implemented and unit-tested.** Tool inventory and status dimensions are explicit; no real project configuration/assets exist at this repository root. | Run the probe with an approved project config and explicit license feature names if checkout-level inventory is needed; probe a user-authorized SSH alias. |
-| M1: deterministic execution | **Minimum VCS/URG/DC/PrimeTime slice implemented and smoke-tested.** Dry run, manifests, metrics, regression seeds, debug artifact inventory, DC power report and missing-evidence gates exist. | Smoke the actual project with its approved PDK, corners, constraints, SAIF/power assumptions, and signoff criteria. Expand parser formats and add supported adapters for optional tools. |
+| M1: deterministic execution | **Minimum VCS/URG/DC/PrimeTime slice implemented and smoke-tested.** R1 adds the shared sequential DAG runtime, stage contracts, resume/cache, and a licensed owned-fixture smoke. Dry run, manifests, metrics, regression seeds, debug artifact inventory, DC power report and missing-evidence gates exist. | Smoke the actual project with its approved PDK, corners, constraints, SAIF/power assumptions, and signoff criteria. Expand parser formats and add supported adapters for optional tools. |
 | M2: verification agent | **Not implemented in this increment.** | Spec-derived testplan, approved TB/SVA generation, failure triage, guided coverage closure, waiver review and traceable closure report. |
-| M3: RTL/PPA optimization | **Not implemented or revalidated in this increment.** An existing PPA skill is preserved. | Establish a real target-project baseline, compatible candidate comparisons, functional/equivalence checks, and measured QoR evidence. |
+| M3: RTL/PPA optimization | **Existing candidate evaluator preserved and connected to the shared process boundary.** Autonomous RTL candidate generation and target-project optimization are not implemented. | Establish a real target-project baseline, compatible candidate comparisons, functional/equivalence checks, and measured QoR evidence. |
 
 ## Probe and validation commands
 

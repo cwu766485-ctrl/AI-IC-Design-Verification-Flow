@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+if "-version" in sys.argv:
+    print("MOCK DC 1.0 (not Synopsys)")
+    raise SystemExit(0)
+
+script = Path(sys.argv[sys.argv.index("-f") + 1])
+out = script.parent
+(out / "netlist.v").write_text("module fifo; endmodule\n")
+(out / "check_design.rpt").write_text("No design errors\n")
+(out / "area.rpt").write_text("Cell Area: 12.0\n")
+(out / "qor.rpt").write_text("Cell Area: 12.0\nDesign WNS: 0.1\nDesign TNS: 0.0\n")
+(out / "timing.rpt").write_text("Design WNS: 0.1\nDesign TNS: 0.0\n")
+(out / "constraints.rpt").write_text("No constraint violations\n")
+(out / "power.rpt").write_text("Total Dynamic Power: 0.01 mW\nCell Leakage Power: 0.001 mW\nTotal Power: 0.011 mW\n")
