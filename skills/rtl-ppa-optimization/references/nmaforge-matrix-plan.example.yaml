@@ -1,0 +1,106 @@
+# Planning example only. Replace adapter commands and private asset paths after
+# the project owner approves a clean worktree and a real measurement setup.
+schema_version: 1
+project: NMAForge-Matrix-Compute-Tile
+design_top: ai_tensor_matrix_core
+testbench_top: tb_ai_tensor_matrix_core_random
+rtl_scope:
+  - rtl/compute/matrix/ai_tensor_matrix_core.v
+  - rtl/compute/matrix/ai_tensor_matrix_array.sv
+  - rtl/compute/matrix/ai_tensor_matrix_datapath.v
+rtl_sources:
+  - rtl/compute/matrix/ai_tensor_matrix_datapath.v
+  - rtl/compute/matrix/ai_tensor_matrix_array.sv
+  - rtl/compute/matrix/ai_tensor_matrix_core.v
+testbench_sources:
+  - dv/block/compute/matrix/tb/tb_ai_tensor_matrix_core_random.sv
+allowed_patch_paths:
+  - rtl/compute/matrix/ai_tensor_matrix_core.v
+  - rtl/compute/matrix/ai_tensor_matrix_array.sv
+  - rtl/compute/matrix/ai_tensor_matrix_datapath.v
+behavior_contract: cycle_equivalent
+required_stages:
+  baseline: [regression, synthesis, sta, power, performance, accuracy]
+  candidate: [regression, formal, synthesis, sta, power, performance, accuracy]
+budget:
+  max_candidates: 3
+  max_runtime_sec: 7200
+read_only_assets:
+  - source: /path/to/approved/stdcells.db
+    target: external/private/stdcells.db
+  - source: /path/to/approved/matrix.sdc
+    target: external/private/matrix.sdc
+stages:
+  - id: regression
+    modes: [baseline, candidate]
+    argv: ["__CONFIGURE_PROJECT_ADAPTER__", regression, "{source_root}", "{run_dir}"]
+    timeout_sec: 1800
+    result_json: "{run_dir}/stage-result.json"
+    expected_artifacts: ["{run_dir}/regression-summary.json"]
+  - id: formal
+    modes: [candidate]
+    argv: ["__CONFIGURE_PROJECT_ADAPTER__", formal, "{source_root}", "{run_dir}"]
+    timeout_sec: 3600
+    result_json: "{run_dir}/stage-result.json"
+    expected_artifacts: ["{run_dir}/formal-summary.json"]
+  - id: synthesis
+    modes: [baseline, candidate]
+    argv: ["__CONFIGURE_PROJECT_ADAPTER__", synthesis, "{source_root}", "{run_dir}"]
+    timeout_sec: 3600
+    result_json: "{run_dir}/stage-result.json"
+    expected_artifacts: ["{run_dir}/synthesis-report.rpt"]
+  - id: sta
+    modes: [baseline, candidate]
+    argv: ["__CONFIGURE_PROJECT_ADAPTER__", sta, "{source_root}", "{run_dir}"]
+    timeout_sec: 3600
+    result_json: "{run_dir}/stage-result.json"
+    expected_artifacts: ["{run_dir}/timing-report.rpt"]
+  - id: power
+    modes: [baseline, candidate]
+    argv: ["__CONFIGURE_PROJECT_ADAPTER__", power, "{source_root}", "{run_dir}"]
+    timeout_sec: 3600
+    result_json: "{run_dir}/stage-result.json"
+    expected_artifacts: ["{run_dir}/power-report.rpt"]
+  - id: performance
+    modes: [baseline, candidate]
+    argv: ["__CONFIGURE_PROJECT_ADAPTER__", performance, "{source_root}", "{run_dir}"]
+    timeout_sec: 1800
+    result_json: "{run_dir}/stage-result.json"
+    expected_artifacts: ["{run_dir}/performance-summary.json"]
+  - id: accuracy
+    modes: [baseline, candidate]
+    argv: ["__CONFIGURE_PROJECT_ADAPTER__", accuracy, "{source_root}", "{run_dir}"]
+    timeout_sec: 1800
+    result_json: "{run_dir}/stage-result.json"
+    expected_artifacts: ["{run_dir}/accuracy-summary.json"]
+metrics:
+  cell_area:
+    source_stage: synthesis
+    direction: lower
+    unit: um^2
+    required: true
+  setup_wns:
+    source_stage: sta
+    direction: higher
+    unit: ns
+    required: true
+  estimated_power:
+    source_stage: power
+    direction: lower
+    unit: mW
+    required: true
+  int8_throughput:
+    source_stage: performance
+    direction: higher
+    unit: GOP/s
+    required: true
+  bf16_max_abs_error:
+    source_stage: accuracy
+    direction: lower
+    unit: absolute
+    required: true
+  fp16_max_abs_error:
+    source_stage: accuracy
+    direction: lower
+    unit: absolute
+    required: true

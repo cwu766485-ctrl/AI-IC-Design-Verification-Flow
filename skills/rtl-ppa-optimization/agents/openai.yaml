@@ -1,0 +1,4 @@
+interface:
+  display_name: "RTL PPA Optimization"
+  short_description: "Baseline and compare RTL PPA candidates"
+  default_prompt: "Use $rtl-ppa-optimization to establish a measured RTL baseline, evaluate a bounded candidate patch, and compare functional and PPA evidence."
