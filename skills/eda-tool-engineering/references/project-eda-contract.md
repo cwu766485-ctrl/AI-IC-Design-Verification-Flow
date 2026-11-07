@@ -30,6 +30,41 @@ dft:
 # library_verilog: /path/to/standard_cell.v
 ```
 
-The parser accepts mappings, scalar lists, and inline `{...}`/`[...]` values. Keep secrets (license tokens, passwords) out of this file. The API passes only declared paths and options to adapters.
+The parser uses PyYAML when installed, or Ruby's standard YAML parser. It validates required types and paths, resolves filelists and RTL patterns in declared order, and rejects missing sources. Keep secrets (license tokens, passwords) out of this file. The API passes only declared paths and options to adapters.
+
+For executable VCS/DC stages, use the following fields:
+
+```yaml
+name: chip
+top: chip_top
+rtl: [rtl/chip_top.sv]
+filelists: [sim/rtl.f]
+include_dirs: [rtl/include]
+defines: [SYNTHESIS]
+pdk:
+  root: /installed/pdk
+  target_library: lib/slow.db
+  link_libraries: [lib/memory.db]
+constraints: constraints/chip.sdc
+flows:
+  sim:
+    tb: sim/tb_chip.sv
+    top: tb_chip
+    test_name: smoke_test
+    seed: 42
+    plusargs: [CASE=smoke]
+    coverage: false
+    timeout_sec: 600
+  synth: {tool: dc}
+  sta:
+    netlist: runs/synthesis/netlist.v
+    sdc: constraints/chip.sdc
+  coverage:
+    vdb: runs/regression/simv.vdb
+```
+
+`flows.sim.top` is the testbench top and is distinct from the design `top`; it is optional only when the TB module can be discovered. `coverage: true` or a value such as `line+cond+tgl` requests VCS compile and runtime instrumentation followed by URG. Standalone `flows.coverage.vdb` accepts one VDB directory or a nonempty list of VDB directories. DC requires an existing target library and SDC. PrimeTime requires an existing mapped netlist, target library, and SDC. A successful process exit without expected artifacts or QoR metrics is `BLOCKED`. A simulation must print `TEST PASSED` or a UVM summary with zero errors and fatals to receive `PASS`.
+
+Every run creates `runs/<id>/manifest.json` with `PASS`, `FAIL`, `ERROR`, `BLOCKED`, `NOT_RUN`, or `SKIPPED`, tool return code, per-stage tool versions, commands, relevant input hashes, Git SHA and working tree, seed/test, logs, and artifact records. License variable values are not stored. `doctor` reports tool presence and configuration validity; it does not perform a license checkout.
 
 DFT terminology: `dft` is the orchestration contract; `scan` describes insertion; `mbist` and `lbist` describe controller/IP integration and test modes; `atpg` describes TestMAX pattern generation. A configured MBIST/LBIST block is not evidence of implementation until reports and a post-DFT netlist exist.

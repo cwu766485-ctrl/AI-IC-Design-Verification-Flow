@@ -1,11 +1,17 @@
 # Milestone 1 Integration Backlog
 
-This backlog is a reviewable implementation plan, not implementation work in
-PR #1. It prioritizes reproducible functional execution before broader EDA
-coverage. Python fake adapters belong in CI; Synopsys execution is a separate
-local smoke gate and must remain reported as unverified until run.
+This backlog tracks the remaining Milestone 1 integration after the initial
+adapter slice. The current branch implements VCS compile/simulation, URG
+extraction, DC synthesis, and explicit-netlist PrimeTime STA adapters, plus
+Python-only regression tests. The local Synopsys smoke used an installed
+example library; target-project validation remains pending. The items below
+cover the canonical runner contract and evidence requirements that are still
+not shared by `eda.py` and `rtl_ppa.py`.
 
 ## M1-01 — Freeze the shared stage contract
+
+**Status:** Architecture and JSON Schema proposal exists; runtime validation
+and compatibility mapping remain pending.
 
 **Goal:** Turn `docs/architecture/unified-execution-contract.md` into the
 versioned input/result/manifest schemas used by both current entry points.
@@ -19,6 +25,10 @@ golden CLI fixtures show old `eda.py` invocation output and exit behavior;
 no second runner is introduced. Depends on review of the contract proposal.
 
 ## M1-02 — Separate VCS compile and simulation stages
+
+**Status:** Implemented as separate VCS stages with fake and local smoke
+coverage. Canonical cross-runner schemas and append-only attempt records remain
+pending.
 
 **Goal:** Make compile and simulation independently reproducible and resumable.
 
@@ -35,6 +45,10 @@ on M1-01.
 
 ## M1-03 — URG coverage extraction from an existing simulation
 
+**Status:** Inline and standalone URG extraction are implemented and tested.
+Canonical VDB content hashing and a normalized uncovered-item parser remain
+pending.
+
 **Goal:** Parse coverage from a known VCS regression without rerunning
 simulation unnecessarily.
 
@@ -49,6 +63,10 @@ M1-02 compile/simulation evidence format.
 
 ## M1-04 — Design Compiler synthesis adapter
 
+**Status:** A project-level DC synthesis adapter is implemented, with fake
+adapter tests and a smoke run using Synopsys' installed example library. Target
+PDK/library validation and operating-corner configuration remain pending.
+
 **Goal:** Produce a reproducible mapped synthesis result with explicit
 constraints and libraries.
 
@@ -59,10 +77,14 @@ area/timing reports, and exact inputs. Reject unresolved references and missing
 or empty reports.
 
 **Acceptance:** Fake DC executable tests cover argv, source/library/SDC
-provenance, exit propagation and missing reports. Local Synopsys smoke remains
+provenance, exit propagation and missing reports. Local Synopsys smoke passed
+with the installed example library; project PDK/library validation remains
 pending. Depends on M1-01.
 
 ## M1-05 — Shared report parser registry
+
+**Status:** Current DC/STA QoR and legacy DFT parsers are strict about required
+metrics but are not yet in a versioned parser registry.
 
 **Goal:** Use versioned parsers with source locations and units for reports
 consumed by VCS/URG/DC and later STA/DFT stages.
@@ -78,6 +100,10 @@ through M1-04.
 
 ## M1-06 — Flow plan and execution slice
 
+**Status:** `aicflow` provides a sequential simulation/synthesis pipeline with
+checkpointing. Generic DAG validation, selected start/end stages, and
+submission to one runtime from `rtl_ppa.py` remain pending.
+
 **Goal:** Execute a validated dependency DAG from a selected start stage to a
 selected end stage.
 
@@ -92,6 +118,10 @@ partial selection, failed ancestors, status mapping, and compatibility CLI
 entry points. Depends on M1-01 and at least M1-02 and M1-04 stage adapters.
 
 ## M1-07 — Checkpoint, resume, and cache invalidation
+
+**Status:** Basic resume and fingerprinted cache behavior exist. Append-only
+attempt history, fully shared budget locking, and complete tool/adapter
+fingerprints remain pending.
 
 **Goal:** Reuse verified stage outputs without silently accepting stale
 artifacts.
@@ -110,8 +140,11 @@ artifact changes force rerun. Interrupted runs remain charged. Depends on M1-06.
 **Goal:** Make the contract, adapters, parsers, and legacy wrappers testable
 without licensed EDA tools.
 
-**Work:** Add fake executable fixtures for VCS compile/sim, URG, and DC; preserve
-report fixtures; run pytest in GitHub Actions; report mock tests as mock tests.
+**Status:** Fake executable fixtures cover VCS compile/sim, URG, DC, and STA;
+Python-only GitHub Actions runs them with the RTL PPA tests.
+
+**Work:** Preserve report fixtures and keep CI independent of licensed EDA;
+report mock tests as mock tests.
 
 **Acceptance:** CI checks plan schemas, filelists, command construction,
 artifacts, statuses, parser results, checkpoint invalidation, and old CLI
@@ -119,6 +152,10 @@ wrappers. No licensed tools or private collateral are required. Depends on
 M1-01 through M1-06 as the corresponding code lands.
 
 ## M1-09 — Local licensed Synopsys smoke test
+
+**Status:** A local owned-fixture smoke passed VCS, URG, DC, and PrimeTime. The
+DC/STA portion used Synopsys' installed `lsi_10k.db` example library. This does
+not satisfy project PDK validation; the project-specific smoke remains pending.
 
 **Goal:** Validate one clean, owned RTL fixture with the actual installed tools.
 

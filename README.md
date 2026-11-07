@@ -16,13 +16,17 @@ Use $organize-chip-project to inspect and safely organize this chip design and v
 
 ### `eda-tool-engineering`
 
-Provide a project-independent command interface for reproducible Synopsys RTL simulation, debug, lint/CDC, formal, synthesis, DFT/ATPG, APR, STA, power, and parasitic-extraction flows. Project facts remain in the project's `eda.yaml`; generated commands, logs, and results stay under `runs/`.
+Provide a project-independent command interface over a project's `eda.yaml`. Executable adapters currently cover VCS simulation, URG coverage extraction, Design Compiler synthesis, and PrimeTime STA. Other listed EDA flows retain planning or script-generation interfaces until their execution and evidence checks are validated. Generated commands, logs, and results stay under `runs/`.
 
 Example:
 
 ```text
 Use $eda-tool-engineering to inspect this project's eda.yaml, validate the environment, and create a dry-run simulation plan.
 ```
+
+See the [EDA adapter capability matrix](docs/eda-adapter-capabilities.md) for
+required inputs and passing evidence. Dry-run and planning results are
+`NOT_RUN`; they are not verification results.
 
 ### `write-agents-md`
 

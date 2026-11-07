@@ -13,10 +13,19 @@ pdk:
   target_library: lib/slow.db
 constraints: constraints/chip.sdc
 flows:
-  sim: {simulator: vcs, tb: sim/tb_top.sv}
-  synth: {tool: dc, script: scripts/run_dc.tcl}
+  sim:
+    simulator: vcs
+    tb: sim/tb_top.sv
+    top: tb_top
+    seed: 1
+    coverage: false
+  synth: {tool: dc}
+  # Set this to a mapped gate-level netlist produced by the synthesis run.
+  sta: {tool: pt, netlist: runs/<synth-run-id>/netlist.v}
+  # URG can consume an existing VDB without rerunning simulation.
+  coverage: {vdb: runs/<sim-run-id>/simv.vdb}
+  # Planning-only flow in this implementation.
   apr: {tool: icc2, script: scripts/run_icc2.tcl}
-  sta: {tool: pt, script: scripts/run_pt.tcl}
 dft:
   enabled: true
   scan: {chains: 8, compression: true}
