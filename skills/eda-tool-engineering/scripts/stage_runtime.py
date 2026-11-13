@@ -171,7 +171,9 @@ def run_process(request, *, cwd, env=None, log_path=None, execute=True, adapter_
     else:
         executable = request["argv"][0]
         local_executable = Path(cwd) / executable if not Path(executable).is_absolute() else Path(executable)
-        if not ((local_executable.is_file() and os.access(local_executable, os.X_OK)) or shutil.which(executable)):
+        stage_path = request.get("environment", {}).get("PATH", os.environ.get("PATH"))
+        if not ((local_executable.is_file() and os.access(local_executable, os.X_OK)) or
+                shutil.which(executable, path=stage_path)):
             record.update(status="BLOCKED", error_class="TOOL_UNAVAILABLE", message="required executable is unavailable")
         else:
             try:

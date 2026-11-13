@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills/eda-tool-engineering/scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from eda_runtime import execute_plan, manifest as make_manifest
+from eda_runtime import _canonicalize_stages, execute_plan, manifest as make_manifest, run_stage
 from stage_runtime import (StageContractError, graph_order, make_stage_input,
                            run_process, validate_stage_input, validate_stage_result)
 
@@ -70,6 +70,87 @@ def test_shared_process_runner_applies_nonsecret_stage_environment(tmp_path):
     record = run_process(request, cwd=str(tmp_path))
     assert record["status"] == "PASS"
     assert record["output"].strip() == "request-value"
+
+
+def test_command_stage_uses_working_directory_and_result_markers(tmp_path):
+    root = tmp_path / "project"
+    run_dir = root / "runs/run"
+    cwd = root / "dv/block"
+    run_dir.mkdir(parents=True)
+    cwd.mkdir(parents=True)
+    stage = {"id": "regression_seed1", "name": "regression", "kind": "command",
+             "command": [sys.executable, "-c", "from pathlib import Path; print(Path.cwd()); print('dma_smoke_test'); print('UVM_ERROR : 0')"],
+             "cwd": str(cwd), "log_name": str(run_dir / "regression.log"), "timeout": 10,
+             "pass_patterns": [r"UVM_ERROR\s*:\s*0"], "fail_patterns": [r"TEST FAILED"],
+             "expected_tests": ["dma_smoke_test"]}
+    record = run_stage(stage, run_dir, True)
+    assert record["status"] == "PASS"
+    assert str(cwd) in Path(record["log"]).read_text()
+    assert record["missing_tests"] == []
+    assert record["failed_patterns"] == []
+
+
+def test_command_stage_passes_configured_environment(tmp_path):
+    run_dir = tmp_path / "runs/run"
+    run_dir.mkdir(parents=True)
+    stage = {"id": "regression_seed1", "name": "regression", "kind": "command",
+             "command": [sys.executable, "-c", "import os; print(os.environ['SEED']); print(os.environ['COV_ROOT'])"],
+             "log_name": "regression.log", "timeout": 10,
+             "environment": {"SEED": "41", "COV_ROOT": str(tmp_path / "vdb")}}
+    record = run_stage(stage, run_dir, True)
+    assert record["status"] == "PASS"
+    assert "41" in Path(record["log"]).read_text()
+    assert str(tmp_path / "vdb") in Path(record["log"]).read_text()
+    contract = json.loads(Path(record["stage_input"]).read_text()) if record.get("stage_input") else None
+    if contract:
+        assert contract["environment"]["SEED"] == "41"
+
+
+def test_command_stage_resolves_executable_from_configured_path(tmp_path):
+    tool_dir = tmp_path / "tools"
+    run_dir = tmp_path / "runs/run"
+    tool_dir.mkdir()
+    run_dir.mkdir(parents=True)
+    tool = tool_dir / "fake_tool"
+    tool.write_text("#!/bin/sh\nprintf 'tool-from-stage-path\\n'\n")
+    tool.chmod(0o755)
+    stage = {"id": "path_stage", "name": "path_stage", "kind": "command",
+             "command": ["fake_tool"], "log_name": "path_stage.log", "timeout": 10,
+             "environment": {"PATH": str(tool_dir)}}
+    record = run_stage(stage, run_dir, True)
+    assert record["status"] == "PASS"
+    assert "tool-from-stage-path" in Path(record["log"]).read_text()
+
+
+def test_command_stage_result_gate_distinguishes_failure_from_missing_evidence(tmp_path):
+    run_dir = tmp_path / "runs/run"
+    run_dir.mkdir(parents=True)
+    stage = {"id": "regression_seed1", "name": "regression", "kind": "command",
+             "command": [sys.executable, "-c", "print('TEST FAILED')"], "log_name": "regression.log",
+             "timeout": 10, "fail_patterns": ["TEST FAILED"], "pass_patterns": ["UVM_ERROR : 0"]}
+    failed = run_stage(stage, run_dir, True)
+    assert failed["status"] == "FAIL"
+    assert failed["error_class"] == "RESULT_CHECK_FAILED"
+    stage["command"] = [sys.executable, "-c", "print('no result summary')"]
+    missing = run_stage(stage, run_dir, True)
+    assert missing["status"] == "BLOCKED"
+    assert missing["error_class"] == "RESULT_MARKER_MISSING"
+
+
+def test_seed_scoped_external_stage_names_survive_r1_graph_canonicalization():
+    stages = [
+        {"id": "dma_block_s1", "name": "dma_block_s1", "requires": []},
+        {"id": "dma_urg_s1", "name": "dma_urg_s1", "requires": ["dma_block_s1"]},
+        {"id": "dma_block_s2", "name": "dma_block_s2", "requires": []},
+        {"id": "dma_urg_s2", "name": "dma_urg_s2", "requires": ["dma_block_s2"]},
+    ]
+    canonical = _canonicalize_stages(stages)
+    order = graph_order(canonical)
+    assert set(order) == {"dma_block_s1", "dma_urg_s1", "dma_block_s2", "dma_urg_s2"}
+    assert order.index("dma_block_s1") < order.index("dma_urg_s1")
+    assert order.index("dma_block_s2") < order.index("dma_urg_s2")
+    assert canonical[1]["dependencies"] == ["dma_block_s1"]
+    assert canonical[3]["dependencies"] == ["dma_block_s2"]
 
 
 def test_pass_result_requires_supported_adapter_tool_and_artifact_provenance():

@@ -55,6 +55,31 @@
       "hit": 1,
       "total": 1
     },
+    "dma_error_scenario_cg.error_kind.abort": {
+      "count": 2,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_error_scenario_cg.error_kind.axi_read_error": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_error_scenario_cg.error_kind.axi_write_error": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_error_scenario_cg.error_kind.config_error": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_error_scenario_cg.error_kind.spad_error": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
     "dma_reset_phase_cg.cp_phase.all_four_ar_before_any_r": {
       "count": 3,
       "hit": 1,
@@ -68,74 +93,38 @@
   },
   "findings": [
     {
-      "classification": "unmeasured",
-      "detail": "checker attempt evidence missing",
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-001",
       "feature_id": "DMA-F-001",
       "testpoint_id": "DMA-TP-001"
     },
     {
-      "classification": "unmeasured",
-      "detail": "checker attempt evidence missing",
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-002",
       "feature_id": "DMA-F-002",
       "testpoint_id": "DMA-TP-002"
     },
     {
-      "classification": "unmeasured",
-      "detail": "checker attempt evidence missing",
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-003",
       "feature_id": "DMA-F-003",
       "testpoint_id": "DMA-TP-003"
     },
     {
-      "classification": "unmeasured",
-      "detail": "checker attempt evidence missing",
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-004",
       "feature_id": "DMA-F-004",
       "testpoint_id": "DMA-TP-004"
     },
     {
-      "classification": "unmeasured",
-      "detail": "checker attempt evidence missing",
-      "feature_id": "DMA-F-005",
-      "testpoint_id": "DMA-TP-005"
-    },
-    {
-      "classification": "missing_checker",
-      "detail": "coverage model group missing: dma_error_scenario_cg",
-      "feature_id": "DMA-F-005",
-      "testpoint_id": "DMA-TP-005"
-    },
-    {
-      "classification": "missing_checker",
-      "detail": "coverage model group missing: dma_error_scenario_cg",
-      "feature_id": "DMA-F-005",
-      "testpoint_id": "DMA-TP-005"
-    },
-    {
-      "classification": "missing_checker",
-      "detail": "coverage model group missing: dma_error_scenario_cg",
-      "feature_id": "DMA-F-005",
-      "testpoint_id": "DMA-TP-005"
-    },
-    {
-      "classification": "missing_checker",
-      "detail": "coverage model group missing: dma_error_scenario_cg",
-      "feature_id": "DMA-F-005",
-      "testpoint_id": "DMA-TP-005"
-    },
-    {
-      "classification": "missing_checker",
-      "detail": "coverage model group missing: dma_error_scenario_cg",
-      "feature_id": "DMA-F-005",
-      "testpoint_id": "DMA-TP-005"
-    },
-    {
-      "classification": "unmeasured",
-      "detail": "checker attempt evidence missing",
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-007",
       "feature_id": "DMA-F-005",
       "testpoint_id": "DMA-TP-007"
     },
     {
-      "classification": "unmeasured",
-      "detail": "checker attempt evidence missing",
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-006",
       "feature_id": "DMA-F-006",
       "testpoint_id": "DMA-TP-006"
     }
@@ -143,12 +132,12 @@
   "global_fail_patterns": [],
   "missing_pass_patterns": [],
   "plan_hash_match": true,
-  "plan_sha256": "4908b295efe03507f0195f15fd64b3eb088e9a5bf8e96c2981af1930349e73a2",
-  "run_count": 4,
+  "plan_sha256": "d2a29af5cc74f390ebb8bd24b6772e8476d29ddaea92b5f21100a0637b6c8174",
+  "run_count": 6,
   "run_failures": [],
   "status": "OPEN",
   "urg_reports": [
-    "<NMAForge-snapshot>/runs/m2_seed_20261107/seed-20261107/dma_block_urg/report",
-    "<NMAForge-snapshot>/runs/m2_seed_20261107/seed-20261107/dma_subsystem_urg/report"
+    "/tmp/nmaforge-m2-coverage-closure/runs/verification-closure/m2-runtime-final-20261113/seed-20261107/dma_block_urg/report",
+    "/tmp/nmaforge-m2-coverage-closure/runs/verification-closure/m2-runtime-final-20261113/seed-20261107/dma_subsystem_urg/report"
   ]
 }

@@ -160,6 +160,10 @@ def plan_errors(plan, root):
 
 def source_hashes(plan, root):
     paths = set()
+    include_dirs = set()
+    for value in plan.get("source_hashes", {}):
+        normalized = value.split(">/", 1)[1] if value.startswith("<") and ">/" in value else value
+        paths.add(relpath(root, normalized))
     for value in plan.get("spec_sources", []):
         paths.add(relpath(root, value))
     for value in plan.get("rtl_sources", []):
@@ -185,6 +189,9 @@ def source_hashes(plan, root):
                 add_filelist(tokens[index], filelist.parent)
             elif token.startswith(("-f", "-F")):
                 add_filelist(token[2:], filelist.parent)
+            elif token.startswith("+incdir+"):
+                for directory in token[len("+incdir+"):].split("+"):
+                    include_dirs.add(relpath(filelist.parent, directory))
             elif not token.startswith(("+", "-")):
                 source = relpath(filelist.parent, token)
                 if source.is_file():
@@ -200,6 +207,22 @@ def source_hashes(plan, root):
             source = point.get("checker", {}).get("source")
             if source:
                 paths.add(relpath(root, source))
+    pending = [path for path in paths if path.is_file()]
+    scanned = set()
+    include_pattern = re.compile(r"(?m)^\s*`include\s+\"([^\"]+)\"")
+    while pending:
+        source = pending.pop()
+        if source in scanned:
+            continue
+        scanned.add(source)
+        if source.suffix.lower() not in (".v", ".sv", ".vh", ".svh"):
+            continue
+        for name in include_pattern.findall(source.read_text(errors="replace")):
+            candidates = [source.parent / name] + [directory / name for directory in include_dirs]
+            included = next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
+            if included is not None and included not in paths:
+                paths.add(included)
+                pending.append(included)
     return {str(path): digest(path) for path in sorted(paths) if path.is_file()}
 
 
@@ -311,7 +334,8 @@ def analyzer(plan, evidence, coverage):
                 findings.append({"feature_id": feature["id"], "testpoint_id": point["id"],
                                  "classification": "missing_stimulus", "detail": "no run evidence for mapped test(s)"})
                 continue
-            bad_runs = [r for r in mapped_runs if r.get("status") not in (None, "PASS") or r.get("return_code", 0) != 0]
+            bad_runs = [r for r in mapped_runs if r.get("status") not in (None, "PASS") or
+                        (r.get("return_code") is not None and r.get("return_code") != 0)]
             if bad_runs or global_fail:
                 findings.append({"feature_id": feature["id"], "testpoint_id": point["id"],
                                  "classification": "run_failure", "detail": "regression exit/severity gate failed"})
@@ -320,7 +344,8 @@ def analyzer(plan, evidence, coverage):
             checker = checker_metrics.get(checker_id)
             if checker is None or checker.get("attempts") is None:
                 findings.append({"feature_id": feature["id"], "testpoint_id": point["id"],
-                                 "classification": "unmeasured", "detail": "checker attempt evidence missing"})
+                                 "classification": "missing_checker_evidence",
+                                 "detail": "checker attempt/failure evidence missing for " + checker_id})
             elif checker.get("failures", 0):
                 findings.append({"feature_id": feature["id"], "testpoint_id": point["id"],
                                  "classification": "checker_failure", "detail": checker})
@@ -335,11 +360,11 @@ def analyzer(plan, evidence, coverage):
                         if point.get("disposition") == "unreachable":
                             cls = "unreachable_unreviewed"
                             detail = "coverage metric missing: " + key
-                        elif coverage_groups and goal["group"] not in coverage_groups:
-                            cls = "missing_checker"
+                        elif "coverage_groups" in coverage and goal["group"] not in coverage_groups:
+                            cls = "missing_coverage_model"
                             detail = "coverage model group missing: " + goal["group"]
                         else:
-                            cls = "unmeasured"
+                            cls = "unmeasured_coverage"
                             detail = "coverage metric missing: " + key
                     elif metric["hit"] >= metric["total"] and metric["total"] > 0:
                         continue
@@ -437,6 +462,79 @@ def analyze_command(args):
         Path(args.out).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps(result, indent=2))
     return 0 if result["status"] == "PASS" else 1
+
+
+def recommend_command(args):
+    plan = yaml_load(Path(args.plan).resolve())
+    analysis = json.loads(Path(args.analysis).read_text())
+    closure = plan.get("closure", {})
+    budget = args.remaining_budget
+    if budget is None:
+        configured = closure.get("budgets", {})
+        budget = {"campaigns": configured.get("max_campaigns", 0),
+                  "seeds": configured.get("max_seeds", 0),
+                  "runtime_sec": configured.get("max_runtime_sec", 0),
+                  "new_tests": configured.get("max_new_tests", 0)}
+    budget_empty = (not any((budget.get("campaigns", 0), budget.get("seeds", 0),
+                             budget.get("runtime_sec", 0), budget.get("new_tests", 0))))
+    findings = analysis.get("findings", [])
+    if analysis.get("status") == "PASS":
+        decisions = [{"action": "STOP", "feature_id": None, "testpoint_id": None,
+                      "evidence": ["all analyzed checks and planned coverage goals are closed"],
+                      "proposed_change": "No source change; preserve the passing evidence baseline.",
+                      "validation_commands": [], "expected_impact": "Keep the verified closure state unchanged.",
+                      "remaining_budget": budget}]
+    elif budget_empty:
+        decisions = [{"action": "STOP", "feature_id": None, "testpoint_id": None,
+                      "evidence": ["analysis remains open", "all configured closure budgets are exhausted"],
+                      "proposed_change": "Request budget renewal after reviewing the open evidence.",
+                      "validation_commands": [], "expected_impact": "No unbudgeted regression or source modification.",
+                      "remaining_budget": budget}]
+    else:
+        actions = {"missing_stimulus": "ADD_STIMULUS", "coverage_miss": "ADD_STIMULUS",
+                   "missing_coverage_model": "ADD_COVERAGE", "unmeasured_coverage": "ADD_COVERAGE",
+                   "checker_failure": "INVESTIGATE_RTL", "run_failure": "INVESTIGATE_RTL",
+                   "missing_checker_evidence": "FIX_CHECKER", "missing_checker": "FIX_CHECKER",
+                   "unreachable_unreviewed": "REQUEST_SPEC_REVIEW", "unreachable": "REQUEST_SPEC_REVIEW",
+                   "plan_mismatch": "STOP"}
+        commands = []
+        for item in closure.get("regression_commands", []):
+            commands.append(" ".join(item.get("argv", [])))
+        if not commands and closure.get("regression_command"):
+            commands.append(" ".join(closure["regression_command"]))
+        decisions = []
+        for finding in findings:
+            action = actions.get(finding.get("classification"), "INVESTIGATE_RTL")
+            if action == "STOP":
+                proposal = "Revalidate the verification plan and evidence hashes before generating changes."
+            elif action == "ADD_COVERAGE":
+                proposal = "Add a coverage sampler driven by the observed DUT response/status, then add a fixture proving each bin can be hit."
+            elif action == "ADD_STIMULUS":
+                proposal = "Add a directed testpoint stimulus for the uncovered behavior and retain its checker and coverage goal."
+            elif action == "FIX_CHECKER":
+                proposal = "Instrument or repair the mapped checker so attempts and failures come from actual checker evaluations."
+            elif action == "REQUEST_SPEC_REVIEW":
+                proposal = "Ask the spec owner to confirm reachability and document a reviewed disposition before waiving the goal."
+            else:
+                proposal = "Reproduce the failure with the recorded seed, inspect RTL and checker evidence, then propose a scoped fix."
+            decisions.append({"action": action, "feature_id": finding.get("feature_id"),
+                              "testpoint_id": finding.get("testpoint_id"),
+                              "evidence": [finding.get("classification", "unknown"), finding.get("detail")],
+                              "proposed_change": proposal, "validation_commands": commands,
+                              "expected_impact": "Resolve this finding without weakening checks or excluding coverage.",
+                              "remaining_budget": budget})
+        if not decisions:
+            decisions = [{"action": "STOP", "feature_id": None, "testpoint_id": None,
+                          "evidence": ["analysis is open but contains no actionable finding"],
+                          "proposed_change": "Review the analysis schema and required evidence sources.",
+                          "validation_commands": commands, "expected_impact": "Avoid an unsupported automated edit.",
+                          "remaining_budget": budget}]
+    result = {"schema_version": 1, "analysis_status": analysis.get("status", "OPEN"),
+              "decisions": decisions}
+    if args.out:
+        Path(args.out).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    print(json.dumps(result, indent=2))
+    return 0
 
 
 def safe_project_file(root, value):
@@ -570,129 +668,255 @@ def close_command(args):
                           "seeds": seeds, "per_seed_timeout_sec": per_seed_timeout,
                           "budgets": budgets}, indent=2))
         return 0
-    ledger_path = safe_project_file(root, args.ledger or "runs/verification-closure/budget.json")
-    ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {"campaigns": 0, "seeds": 0, "runtime_sec": 0, "new_tests": 0}
-    if ledger["campaigns"] + 1 > budgets.get("max_campaigns", 3):
-        raise PlanError("campaign budget exhausted")
-    if ledger["seeds"] + len(seeds) > budgets.get("max_seeds", 20):
-        raise PlanError("seed budget exhausted")
-    worst_case = len(seeds) * per_seed_timeout
-    if ledger["runtime_sec"] + worst_case > budgets.get("max_runtime_sec", 7200):
-        raise PlanError("worst-case runtime would exceed campaign budget")
-    campaign_id = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ")
-    out = Path(args.out_dir) if args.out_dir else Path("runs/verification-closure") / campaign_id
+    eda_scripts = Path(__file__).resolve().parents[3] / "skills/eda-tool-engineering/scripts"
+    if str(eda_scripts) not in sys.path:
+        sys.path.insert(0, str(eda_scripts))
+    from eda_runtime import _attempts_charged, _path_fingerprint, execute_plan
+    from stage_runtime import cache_lock, save_json
+
+    run_id = args.run_id or (Path(args.out_dir).name if args.resume and args.out_dir else
+                             datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ"))
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_id):
+        raise PlanError("run id may contain only letters, numbers, _, . or -")
+    out = Path(args.out_dir) if args.out_dir else Path("runs/verification-closure") / run_id
     if not out.is_absolute():
         out = (root / out).resolve()
-    if out.exists():
-        raise PlanError("campaign output already exists: " + str(out))
-    out.mkdir(parents=True)
-    revision = git_info(root)
-    if not revision.get("sha"):
-        revision["sha"] = plan.get("source_revision")
-    campaign = {"campaign_id": campaign_id, "project": plan["project"], "plan_sha256": digest(plan_path),
-                "git": revision, "source_revision": plan.get("source_revision"),
-                "status": "PASS", "runs": [], "commands": commands,
-                "tool_versions": {}, "started_at": time.time()}
-    started_all = time.time()
+    checkpoint_path = out / "checkpoint.json"
+    if args.resume and not checkpoint_path.is_file():
+        raise PlanError("resume requested but the R1 checkpoint is missing")
+    if out.exists() and not args.resume:
+        raise PlanError("campaign output already exists; pass --resume to reuse its R1 checkpoint")
+    out.mkdir(parents=True, exist_ok=True)
+
+    ledger_path = safe_project_file(root, args.ledger or "runs/verification-closure/budget.json")
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
     max_runtime = budgets.get("max_runtime_sec", 7200)
+    worst_case = len(seeds) * per_seed_timeout
+    with cache_lock(ledger_path.with_suffix(".lock")):
+        ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {
+            "campaigns": 0, "seeds": 0, "runtime_sec": 0.0, "new_tests": 0,
+            "reservations": {}}
+        ledger.setdefault("reservations", {})
+        reservation = ledger["reservations"].get(run_id)
+        if args.resume:
+            if reservation is None:
+                raise PlanError("campaign budget reservation is missing; refusing an uncharged resume")
+            reserved_runtime = float(reservation["runtime_sec"])
+            charged = _attempts_charged(out / "attempts.jsonl")
+            runtime_budget = max(0.0, reserved_runtime - charged)
+            if runtime_budget <= 0:
+                raise PlanError("campaign runtime reservation exhausted")
+        else:
+            if ledger["campaigns"] + 1 > budgets.get("max_campaigns", 3):
+                raise PlanError("campaign budget exhausted")
+            if ledger["seeds"] + len(seeds) > budgets.get("max_seeds", 20):
+                raise PlanError("seed budget exhausted")
+            if float(ledger["runtime_sec"]) + worst_case > max_runtime:
+                raise PlanError("worst-case runtime would exceed campaign budget")
+            ledger["campaigns"] += 1
+            ledger["seeds"] += len(seeds)
+            ledger["runtime_sec"] = float(ledger["runtime_sec"]) + worst_case
+            reservation = {"runtime_sec": worst_case, "seeds": len(seeds)}
+            ledger["reservations"][run_id] = reservation
+            save_json(ledger_path, ledger)
+            runtime_budget = worst_case
+
+    commands = closure.get("regression_commands") or [{"name": "regression", "argv": closure["regression_command"],
+                                                         "expected_tests": closure.get("expected_tests", [])}]
+    coverage_commands = closure.get("coverage_commands", [])
+    if not coverage_commands and closure.get("coverage_command"):
+        coverage_commands = [{"name": "coverage", "argv": closure["coverage_command"]}]
+    eda_bins = [str(Path(os.environ[key]) / "bin") for key in ("VCS_HOME", "DC_HOME")
+                if os.environ.get(key) and (Path(os.environ[key]) / "bin").is_dir()]
+    inherited_path = os.environ.get("PATH", "")
+    stage_path = os.pathsep.join(eda_bins + [inherited_path])
+    stage_defs, stage_meta, coverage_reports = [], {}, []
+    vdb_inputs = {seed: set() for seed in seeds}
+    process_stages_per_seed = max(1, len(commands) + len(coverage_commands))
+    stage_timeout = max(1, int(per_seed_timeout / process_stages_per_seed))
     for seed in seeds:
         seed_dir = out / ("seed-" + str(seed))
-        seed_dir.mkdir()
-        seed_started = time.time()
-        for command_index, command_spec in enumerate(commands):
-            run_dir = seed_dir / (command_spec.get("name") or ("regression-" + str(command_index + 1)))
-            run_dir.mkdir()
+        for index, command_spec in enumerate(commands):
+            name = command_spec.get("name") or ("regression-" + str(index + 1))
+            stage_dir = seed_dir / name
+            stage_dir.mkdir(parents=True, exist_ok=True)
             cwd_path = safe_project_file(root, command_spec.get("cwd", "."))
-            cmd = expand_globs(substitute(command_spec["argv"], seed, run_dir, seed_dir, root, cwd_path), cwd_path)
-            env = dict(os.environ)
-            env.update({"SEED": str(seed), "COV_ROOT": str(run_dir / "vdb"), "VC_RUN_DIR": str(run_dir)})
-            eda_bins = [str(Path(env[key]) / "bin") for key in ("VCS_HOME", "DC_HOME") if env.get(key) and (Path(env[key]) / "bin").is_dir()]
-            env["PATH"] = os.pathsep.join(eda_bins + [env.get("PATH", "")])
-            cmd = resolve_tool(cmd, env)
-            log_path = run_dir / "regression.log"
-            started = time.time()
-            try:
-                remaining = min(per_seed_timeout - (time.time() - seed_started), max_runtime - ledger["runtime_sec"] - (time.time() - started_all))
-                if remaining <= 0:
-                    raise subprocess.TimeoutExpired(cmd, per_seed_timeout)
-                with log_path.open("w") as stream:
-                    proc = subprocess.run(cmd, cwd=cwd_path, env=env, stdout=stream, stderr=subprocess.STDOUT,
-                                          timeout=remaining)
-                return_code = proc.returncode
-                text = log_path.read_text(errors="replace")
-                failed = [x for x in command_spec.get("fail_patterns", closure.get("fail_patterns", [])) if re.search(x, text)]
-                missing = [x for x in command_spec.get("pass_patterns", closure.get("pass_patterns", [])) if not re.search(x, text)]
-                expected_missing = [name for name in command_spec.get("expected_tests", []) if name not in text]
-                license_failure = re.search(r"(?:failed to obtain|cannot connect to).*licen[cs]e", text, re.I)
-                status = "PASS" if return_code == 0 and not failed and not missing and not expected_missing else "FAIL"
-                if license_failure or (missing or expected_missing) and return_code != 0:
-                    status = "BLOCKED"
-                run = {"seed": seed, "test": "*", "command_name": command_spec.get("name"),
-                       "status": status, "return_code": return_code, "log": str(log_path),
-                       "command": cmd, "elapsed_sec": time.time() - started,
-                       "fail_patterns": failed, "missing_pass_patterns": missing, "missing_tests": expected_missing}
-            except subprocess.TimeoutExpired:
-                run = {"seed": seed, "test": "*", "command_name": command_spec.get("name"),
-                       "status": "BLOCKED", "return_code": None, "log": str(log_path),
-                       "command": cmd, "elapsed_sec": time.time() - started, "reason": "timeout"}
-            except OSError as exc:
-                run = {"seed": seed, "test": "*", "command_name": command_spec.get("name"),
-                       "status": "ERROR", "return_code": None, "log": str(log_path),
-                       "command": cmd, "elapsed_sec": time.time() - started, "reason": str(exc)}
-            campaign["runs"].append(run)
-            if run["status"] != "PASS":
-                campaign["status"] = run["status"]
-                break
-        if campaign["status"] != "PASS":
-            break
-        coverage_commands = closure.get("coverage_commands", [])
-        if not coverage_commands and closure.get("coverage_command"):
-            coverage_commands = [{"name": "coverage", "argv": closure["coverage_command"]}]
+            argv = expand_globs(substitute(command_spec["argv"], seed, stage_dir, seed_dir, root, cwd_path), cwd_path)
+            env = {"SEED": str(seed), "COV_ROOT": str(stage_dir / "vdb"),
+                   "VC_RUN_DIR": str(stage_dir), "PATH": stage_path}
+            argv = resolve_tool(argv, dict(os.environ, **env))
+            safe_seed = str(seed).replace("-", "neg")
+            stage_id = re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_") + "_s" + safe_seed
+            stage = {"id": stage_id, "name": stage_id, "kind": "command", "stage_kind": "regression",
+                     "adapter_id": "project.verification.regression.v1", "command": argv,
+                     "cwd": str(cwd_path), "log_name": str(stage_dir / "regression.log"),
+                     "timeout": stage_timeout, "seed": seed, "environment": env,
+                     "expected_tests": command_spec.get("expected_tests", []),
+                     "pass_patterns": command_spec.get("pass_patterns", closure.get("pass_patterns", [])),
+                     "fail_patterns": command_spec.get("fail_patterns", closure.get("fail_patterns", [])),
+                     "requires": [], "dependencies": []}
+            cov_root = Path(env["COV_ROOT"])
+            artifact_paths = {cov_root} if any("COV_ROOT" in arg for arg in command_spec["argv"]) else set()
+            for raw_arg in command_spec["argv"]:
+                if ".vdb" not in raw_arg.lower():
+                    continue
+                expanded = substitute([raw_arg], seed, stage_dir, seed_dir, root, cwd_path)[0]
+                candidate = Path(expanded.split("=", 1)[-1])
+                candidate = (cwd_path / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+                if any(char in str(candidate) for char in "*?["):
+                    candidate = candidate.parent
+                artifact_paths.add(candidate)
+            vdb_inputs[seed].update(artifact_paths)
+            stage_defs.append(stage)
+            stage_meta[stage_id] = {"seed": seed, "test": "*", "command_name": name}
+
+        regression_ids = [stage["id"] for stage in stage_defs if stage_meta[stage["id"]]["seed"] == seed]
         for command_spec in coverage_commands:
-            cov_dir = seed_dir / (command_spec.get("name") or "coverage")
-            cov_dir.mkdir()
+            name = command_spec.get("name") or "coverage"
+            stage_dir = seed_dir / name
+            stage_dir.mkdir(parents=True, exist_ok=True)
             cwd_path = safe_project_file(root, command_spec.get("cwd", "."))
-            cov_cmd = expand_globs(substitute(command_spec["argv"], seed, cov_dir, seed_dir, root, cwd_path), cwd_path)
-            eda_bins = [str(Path(os.environ[key]) / "bin") for key in ("VCS_HOME", "DC_HOME") if os.environ.get(key) and (Path(os.environ[key]) / "bin").is_dir()]
-            cov_env = dict(os.environ, SEED=str(seed), COV_ROOT=str(seed_dir / "vdb"), VC_RUN_DIR=str(cov_dir))
-            cov_env["PATH"] = os.pathsep.join(eda_bins + [cov_env.get("PATH", "")])
-            cov_cmd = resolve_tool(cov_cmd, cov_env)
-            cov_log = cov_dir / "coverage.log"
-            try:
-                remaining = min(per_seed_timeout - (time.time() - seed_started), max_runtime - ledger["runtime_sec"] - (time.time() - started_all))
-                if remaining <= 0:
-                    raise subprocess.TimeoutExpired(cov_cmd, per_seed_timeout)
-                with cov_log.open("w") as stream:
-                    cov_proc = subprocess.run(cov_cmd, cwd=cwd_path, env=cov_env,
-                                              stdout=stream, stderr=subprocess.STDOUT, timeout=remaining)
-                campaign["runs"].append({"seed": seed, "test": "*", "command_name": command_spec.get("name"),
-                                          "status": "PASS" if cov_proc.returncode == 0 else "FAIL",
-                                          "return_code": cov_proc.returncode, "log": str(cov_log), "command": cov_cmd})
-                if cov_proc.returncode:
-                    campaign["status"] = "FAIL"
-                    break
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                campaign["runs"].append({"seed": seed, "test": "*", "command_name": command_spec.get("name"),
-                                          "status": "BLOCKED", "return_code": None, "log": str(cov_log),
-                                          "command": cov_cmd, "reason": str(exc)})
-                campaign["status"] = "BLOCKED"
-                break
-        if campaign["status"] != "PASS":
-            break
-    campaign["elapsed_sec"] = time.time() - started_all
-    campaign["finished_at"] = time.time()
-    campaign["source_hashes"] = source_hashes(plan, root)
-    campaign["tool_versions"] = tool_versions(campaign["runs"])
-    (out / "evidence.json").write_text(json.dumps(campaign, indent=2, sort_keys=True) + "\n")
-    ledger["campaigns"] += 1
-    ledger["seeds"] += len(set(x["seed"] for x in campaign["runs"] if "seed" in x))
-    ledger["runtime_sec"] += int(campaign["elapsed_sec"])
-    ledger_path.write_text(json.dumps(ledger, indent=2, sort_keys=True) + "\n")
-    print(json.dumps({"status": campaign["status"], "campaign": str(out),
-                      "evidence": str(out / "evidence.json"), "ledger": str(ledger_path),
-                      "runs": campaign["runs"], "elapsed_sec": campaign["elapsed_sec"]}, indent=2))
-    return 0 if campaign["status"] == "PASS" else 1
+            argv = expand_globs(substitute(command_spec["argv"], seed, stage_dir, seed_dir, root, cwd_path), cwd_path)
+            argv = resolve_tool(argv, dict(os.environ, PATH=stage_path))
+            safe_seed = str(seed).replace("-", "neg")
+            stage_id = re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_") + "_s" + safe_seed
+            report_dir = stage_dir / "report"
+            command_stage = {"id": stage_id, "name": stage_id, "kind": "command", "stage_kind": "coverage",
+                             "adapter_id": "project.verification.coverage.v1", "command": argv,
+                             "cwd": str(cwd_path), "log_name": str(stage_dir / "coverage.log"),
+                             "timeout": stage_timeout, "seed": seed,
+                             "environment": {"SEED": str(seed), "PATH": stage_path},
+                             "cache_inputs": [str(path) for path in sorted(vdb_inputs[seed], key=str)],
+                             "artifacts": [str(report_dir)], "requires": regression_ids,
+                             "dependencies": regression_ids}
+            stage_defs.append(command_stage)
+            stage_meta[stage_id] = {"seed": seed, "test": "*", "command_name": name}
+            report_id = "parse_" + stage_id
+            report = {"id": report_id, "name": report_id,
+                      "kind": "coverage_summary", "stage_kind": "coverage_analysis",
+                      "adapter_id": "project.verification.coverage-summary.v1",
+                      "report_dir": str(report_dir), "artifact": str(stage_dir / "coverage-metrics.json"),
+                      "functional": False, "seed": seed, "requires": [stage_id],
+                      "dependencies": [stage_id]}
+            stage_defs.append(report)
+            stage_meta[report["id"]] = {"seed": seed, "test": "*", "command_name": "parse_" + name}
+            coverage_reports.append(str(report_dir))
+
+    def import_cache_inputs():
+        paths = {plan_path.resolve()}
+        paths.update(Path(path).resolve() for path in source_hashes(plan, root))
+        return sorted(path for path in paths if path.is_file())
+
+    revision = git_info(root)
+    if not revision.get("sha"):
+        revision["sha"] = plan.get("source_revision") or "unknown"
+    source_map = {Path(path).relative_to(root).as_posix(): value
+                  for path, value in source_hashes(plan, root).items()}
+    source_tree = hashlib.sha256(json.dumps({"plan": digest(plan_path), "sources": source_map},
+                                             sort_keys=True).encode()).hexdigest()
+    project_record = {"name": plan["project"], "source_revision": revision["sha"],
+                      "source_tree_sha256": source_tree,
+                      "ordered_sources": sorted(source_map),
+                      "filelists": plan.get("source_filelists", [])}
+    started = time.time()
+    resume = json.loads(checkpoint_path.read_text()) if args.resume else None
+    records = execute_plan(stage_defs, out, True, resume, root=root, run_id=run_id,
+                           project=project_record, cache_inputs=import_cache_inputs(),
+                           budget_seconds=runtime_budget)
+    elapsed = round(time.time() - started, 6)
+    runs = []
+    for record in records:
+        if record.get("id") not in stage_meta or record.get("kind") == "coverage_summary":
+            continue
+        item = {**stage_meta[record["id"]], "status": record.get("status"),
+                "return_code": record.get("return_code"), "log": record.get("log"),
+                "command": record.get("command"), "elapsed_sec": record.get("elapsed_sec", 0),
+                "reason": record.get("reason"), "error_class": record.get("error_class"),
+                "missing_tests": record.get("missing_tests", []),
+                "failed_patterns": record.get("failed_patterns", [])}
+        runs.append(item)
+    checkers = {}
+    checker_pattern = re.compile(r"CHECKER_EVIDENCE\s+id=([A-Za-z0-9_-]+)\s+attempts=(\d+)\s+failures=(\d+)")
+    for item in runs:
+        if not item.get("log") or not Path(item["log"]).is_file():
+            continue
+        for match in checker_pattern.finditer(Path(item["log"]).read_text(errors="replace")):
+            data = checkers.setdefault(match.group(1), {"attempts": 0, "failures": 0})
+            data["attempts"] += int(match.group(2))
+            data["failures"] += int(match.group(3))
+    tool_records = [item for item in runs if item.get("log")]
+    campaign_status = "PASS" if records and all(x.get("status") == "PASS" for x in records) else next(
+        (x.get("status") for x in records if x.get("status") in ("FAIL", "ERROR", "BLOCKED")), "NOT_RUN")
+    coverage_bins = urg_coverage_metrics(plan, coverage_reports)
+    coverage_groups = urg_coverage_groups(coverage_reports)
+    campaign = {"campaign_id": run_id, "project": plan["project"], "plan_sha256": digest(plan_path),
+                "git": revision, "source_revision": plan.get("source_revision"),
+                "source_hashes": source_map, "status": campaign_status, "runs": runs,
+                "commands": commands, "seeds": seeds, "budgets": budgets,
+                "tool_versions": tool_versions(tool_records), "checkers": checkers,
+                "coverage_bins": coverage_bins, "coverage_groups": coverage_groups,
+                "stage_records": records, "started_at": started, "finished_at": time.time(),
+                "elapsed_sec": elapsed}
+    closure_result = analyzer(plan, campaign, campaign)
+    closure_result.update(plan_sha256=digest(plan_path), plan_hash_match=True,
+                          urg_reports=coverage_reports)
+    artifacts_by_path = {}
+    for record in records:
+        for artifact in record.get("artifacts", []):
+            if artifact.get("exists") is False:
+                continue
+            artifacts_by_path[artifact["path"]] = artifact
+    for seed, paths in vdb_inputs.items():
+        for vdb_path in sorted(paths, key=str):
+            fingerprints = _path_fingerprint([vdb_path])
+            normalized = []
+            for item in fingerprints:
+                try:
+                    relative = Path(item["path"]).relative_to(vdb_path.resolve()).as_posix()
+                except ValueError:
+                    raise PlanError("VCS coverage artifact resolves outside its VDB: " + item["path"])
+                normalized.append({"path": relative, "size_bytes": item["size_bytes"],
+                                   "sha256": item["sha256"]})
+            inventory = json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
+            artifacts_by_path[str(vdb_path)] = {
+                "path": str(vdb_path), "kind": "vcs_vdb", "exists": vdb_path.is_dir(),
+                "cacheable": False, "files": len(normalized),
+                "size_bytes": sum(item["size_bytes"] for item in normalized),
+                "inventory_sha256": hashlib.sha256(inventory).hexdigest()}
+    save_json(out / "evidence.json", campaign)
+    save_json(out / "closure-analysis.json", closure_result)
+    manifest = {"schema_version": 1, "run_id": run_id, "flow": "verification_closure",
+                "project": plan["project"], "status": campaign_status,
+                "closure_status": closure_result["status"], "source_revision": revision,
+                "source_hashes": source_map, "plan_sha256": digest(plan_path),
+                "plan_source": os.path.relpath(plan_path, root), "seeds": seeds,
+                "budget_seconds": runtime_budget,
+                "budget_charged_seconds": _attempts_charged(out / "attempts.jsonl"),
+                "stages": records, "artifacts": [artifacts_by_path[key] for key in sorted(artifacts_by_path)],
+                "failure_feedback": [{"stage_id": item.get("id"), "status": item.get("status"),
+                                      "error_class": item.get("error_class"),
+                                      "reason": item.get("reason"),
+                                      "missing_tests": item.get("missing_tests", []),
+                                      "failed_patterns": item.get("failed_patterns", [])}
+                                     for item in records if item.get("status") != "PASS"]}
+    save_json(out / "manifest.json", manifest)
+    charged_runtime = _attempts_charged(out / "attempts.jsonl")
+    with cache_lock(ledger_path.with_suffix(".lock")):
+        ledger = json.loads(ledger_path.read_text())
+        reservation = ledger.get("reservations", {}).get(run_id)
+        if reservation and campaign_status == "PASS":
+            ledger["runtime_sec"] = max(0.0, float(ledger["runtime_sec"]) -
+                                        float(reservation["runtime_sec"]) + charged_runtime)
+            ledger["seeds"] = max(0, int(ledger["seeds"]) - int(reservation["seeds"]) + len(seeds))
+            ledger["reservations"].pop(run_id, None)
+            save_json(ledger_path, ledger)
+    print(json.dumps({"status": campaign_status, "closure_status": closure_result["status"],
+                      "campaign": str(out), "evidence": str(out / "evidence.json"),
+                      "manifest": str(out / "manifest.json"),
+                      "closure_analysis": str(out / "closure-analysis.json"),
+                      "remaining_budget_sec": max(0.0, runtime_budget - charged_runtime),
+                      "failure_feedback": manifest["failure_feedback"]}, indent=2))
+    return 0 if campaign_status == "PASS" else 1
 
 
 def main():
@@ -711,6 +935,11 @@ def main():
     analyze.add_argument("--coverage-json")
     analyze.add_argument("--urg-report", action="append", default=[])
     analyze.add_argument("--out")
+    recommend = sub.add_parser("recommend")
+    recommend.add_argument("--plan", required=True)
+    recommend.add_argument("--analysis", required=True)
+    recommend.add_argument("--remaining-budget", type=json.loads)
+    recommend.add_argument("--out")
     scaffold = sub.add_parser("scaffold")
     scaffold.add_argument("--project-root", required=True)
     scaffold.add_argument("--test-class", required=True)
@@ -730,6 +959,8 @@ def main():
     close.add_argument("--ledger")
     close.add_argument("--max-seeds", type=int)
     close.add_argument("--timeout-sec", type=int)
+    close.add_argument("--run-id")
+    close.add_argument("--resume", action="store_true")
     close.add_argument("--execute", action="store_true")
     args = parser.parse_args()
     try:
@@ -747,6 +978,8 @@ def main():
             return 1 if errors else 0
         if args.command == "analyze":
             return analyze_command(args)
+        if args.command == "recommend":
+            return recommend_command(args)
         if args.command == "scaffold":
             scaffold_command(args)
             return 0

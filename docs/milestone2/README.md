@@ -31,26 +31,33 @@ abort/error checks.
 
 ## Executed campaign
 
-One bounded seed (`20261107`) was run against the isolated NMAForge archive at
-`c290eba7697138a4fcf2cbbac9262264849f0aeb`. All 19 block UVM tests and the
-subsystem reset test passed their explicit test-name, UVM severity, and process
-exit-code gates. URG generated separate block and subsystem reports with VCS /
-URG `V-2023.12-SP1`; source hashes include every file in both simulator
-filelists. The raw campaign manifest is included in
-[`campaign-evidence.json`](nmaforge_dma/campaign-evidence.json); the complete
-per-command logs, VCS binaries, VDBs, and URG HTML artifacts remain under a
-local temporary run directory that is not checked into this repository. Its plan hash
-matches the generated plan.
+The integrated R1 Stage Runtime ran campaign `m2-runtime-final-20261113` on
+seed `20261107`, source revision `c290eba7697138a4fcf2cbbac9262264849f0aeb`,
+and plan SHA256 `d2a29af5cc74f390ebb8bd24b6772e8476d29ddaea92b5f21100a0637b6c8174`.
+All 19 block tests and the subsystem reset test passed, with zero UVM errors or
+fatals in the positive runs. VCS and URG were `V-2023.12-SP1`. The campaign
+manifest and analyzer passed their stage gates; closure remains `OPEN` because
+six mapped checkers still lack machine-readable attempt/failure evidence.
 
-The URG parser measured 13 of the plan's 18 unique bins, and all 13 were hit.
-That includes both reset phases (counts 3 and 1), 4 KiB crossing, load/store,
-transfer shape, gather, length, outstanding reads, and transfer-mode crosses.
-The analysis remains `OPEN`: five per-error bins have no covergroup, and the
-seven checker IDs do not have machine-readable attempt/failure counters. The
-machine-readable results are in
+URG measured all five error bins: `abort=2`, `axi_read_error=1`,
+`spad_error=1`, `axi_write_error=1`, and `config_error=1`. Both subsystem reset
+bins were hit (counts 3 and 1). `DMA-CK-005` reported 6 attempts and 0
+failures. A separate negative run deliberately supplied an incorrect observed
+error code; `DMA_ERROR_ABI` fired and CK-005 reported 1 attempt and 1 failure.
+This validates the checker response to a corrupted observation, not a mutated
+RTL campaign.
+
+The captured campaign manifest predates the source-hash fix and has an
+incomplete source map. A post-run plan revalidation hashes 49 current inputs,
+including recursively discovered SystemVerilog includes. A fresh campaign to
+refresh the manifest was refused because the plan's three-campaign budget is
+exhausted; the two blocked URG attempts and their reservations remain recorded.
+The exact run IDs, source state, local log/VDB/report paths, bin counts, and
+remaining blockers are in
+[`runtime-campaign-20261113.md`](nmaforge_dma/runtime-campaign-20261113.md).
+The machine-readable closure result is in
 [`closure-analysis.json`](nmaforge_dma/closure-analysis.json). URG process
-success and code-coverage percentage are not treated as proof of functional
-closure.
+success and code-coverage percentage are not signoff evidence by themselves.
 
 ## Commands
 
@@ -81,6 +88,6 @@ functional bins from URG HTML. Supply checker attempt/failure counts with
 generated example plan is [here](nmaforge_dma/verification-plan.md), with the
 machine-readable source hashes [here](nmaforge_dma/verification-plan.json).
 
-The NMAForge working tree was inspected read-only. The regression campaign is
-run from an isolated archive snapshot so VCS outputs cannot modify that
-project tree.
+The original NMAForge worktree was left untouched. The feature branch and all
+simulator outputs are isolated in `/tmp/nmaforge-m2-coverage-closure`; VCS
+outputs remain under its ignored `runs/` directory.

@@ -278,6 +278,19 @@ SCORE WEIGHT
         (report / "grpinfo.txt").write_text("")
         self.assertEqual(_urg_metrics(report, functional=True)["functional_group_count"], 0)
 
+    def test_urg_parser_reads_html_only_reports(self):
+        report = self.root / "coverage-html-report"
+        report.mkdir()
+        (report / "dashboard.html").write_text("""<b>Total Module Definition Coverage Summary</b>
+<table><tr><td>SCORE</td><td>LINE</td></tr><tr><td>54.32</td><td>51.13</td></tr></table>
+<b>Total Groups Coverage Summary</b><table><tr><td>SCORE</td></tr><tr><td>100.00</td></tr></table>""")
+        (report / "grp0.html").write_text("<html><title>Group :: tb_top::dma_error_scenario_cg</title></html>")
+        metrics = _urg_metrics(report, functional=True)
+        self.assertEqual(metrics["parser"], "urg-html-v1")
+        self.assertEqual(metrics["code_coverage_percent"], 54.32)
+        self.assertEqual(metrics["functional_coverage_percent"], 100.0)
+        self.assertEqual(metrics["functional_group_count"], 1)
+
     def test_power_parser_keeps_missing_total_unset_and_marks_partial(self):
         report = self.root / "power.rpt"
         report.write_text("""Dynamic Power Units = 100nW

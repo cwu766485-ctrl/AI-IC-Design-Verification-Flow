@@ -1,5 +1,6 @@
 """Deterministic VCS/DC stages and evidence for one EDA run."""
 import hashlib
+import html
 import json
 import os
 import re
@@ -434,11 +435,40 @@ def parse_power(path):
 
 def _urg_metrics(report_dir, functional):
     report_dir = Path(report_dir)
-    dashboard = report_dir / "dashboard.txt"
+    dashboard_text = report_dir / "dashboard.txt"
+    dashboard_html = report_dir / "dashboard.html"
+    dashboard = dashboard_text if dashboard_text.is_file() else dashboard_html
     groups = report_dir / "grpinfo.txt"
     text = dashboard.read_text(errors="replace") if dashboard.is_file() else ""
+    html_text = text if dashboard == dashboard_html else None
+    if dashboard == dashboard_html:
+        text = re.sub(r"</?(?:br|tr|table|div|p|hr)\b[^>]*>", "\n", text, flags=re.I)
+        text = html.unescape(re.sub(r"<[^>]+>", " ", text)).replace("\xa0", " ")
     group_text = groups.read_text(errors="replace") if groups.is_file() else ""
     def table(value, heading):
+        if html_text is not None:
+            heading_match = re.search(re.escape(heading), html_text, re.I)
+            if not heading_match:
+                return {}
+            table_match = re.search(r"<table\b[^>]*>(.*?)</table>", html_text[heading_match.end():], re.I | re.S)
+            if not table_match:
+                return {}
+            rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", table_match.group(1), re.I | re.S)
+            if len(rows) < 2:
+                return {}
+            cells = [re.findall(r"<t[dh]\b[^>]*>(.*?)</t[dh]>", row, re.I | re.S)
+                     for row in rows[:2]]
+            headers = [html.unescape(re.sub(r"<[^>]+>", "", cell)).strip() for cell in cells[0]]
+            values = [html.unescape(re.sub(r"<[^>]+>", "", cell)).strip() for cell in cells[1]]
+            if not headers or len(headers) != len(values):
+                return {}
+            parsed = {}
+            for key, item in zip(headers, values):
+                try:
+                    parsed[key.lower()] = float(item)
+                except ValueError:
+                    parsed[key.lower()] = None
+            return parsed
         lines = value.splitlines()
         for index, line in enumerate(lines):
             if heading.lower() not in line.lower():
@@ -462,15 +492,25 @@ def _urg_metrics(report_dir, functional):
     functional_table = table(text, "Total Groups Coverage Summary")
     overall_table = table(text, "Total Coverage Summary")
     group_names = re.findall(r"(?im)^\s*Group\s*:\s*(\S+)", group_text)
+    if not group_names:
+        for group_page in report_dir.glob("grp*.html"):
+            content = group_page.read_text(errors="replace")
+            match = re.search(r"<title>.*?Group\s*::\s*(.*?)</title>", content, re.I | re.S)
+            if match:
+                name = html.unescape(re.sub(r"<[^>]+>", "", match.group(1))).strip()
+                if name:
+                    group_names.append(name)
     return {
-        "parser": "urg-text-v1",
+        "parser": "urg-text-v1" if dashboard == dashboard_text else "urg-html-v1",
         "code_coverage_percent": code_table.get("score"),
         "code_coverage_by_type_percent": {key: value for key, value in code_table.items() if key != "score"},
         "overall_coverage_score_percent": overall_table.get("score"),
         "functional_coverage_percent": functional_table.get("score") if functional else None,
         "functional_group_count": len(set(group_names)),
         "functional_report_requested": bool(functional),
-        "reports": [artifact_record(path) for path in (dashboard, groups, report_dir / "groups.txt", report_dir / "tests.txt") if path.is_file()],
+        "reports": [artifact_record(path) for path in
+                    (dashboard_text, dashboard_html, groups, report_dir / "groups.txt", report_dir / "tests.txt")
+                    if path.is_file()],
     }
 
 
@@ -555,10 +595,11 @@ def run_stage(stage, run_dir, execute):
         dashboard = report_dir / "dashboard.html"
         dashboard_text = report_dir / "dashboard.txt"
         groups = report_dir / "grpinfo.txt"
-        if not _artifact_present(dashboard) or not _artifact_present(dashboard_text):
+        if not _artifact_present(dashboard) and not _artifact_present(dashboard_text):
             record.update(status="BLOCKED", error_class="REPORT_MISSING",
-                          missing_artifacts=[str(x) for x in (dashboard, dashboard_text) if not _artifact_present(x)])
-        elif stage.get("functional") and not _artifact_present(groups):
+                          missing_artifacts=[str(dashboard), str(dashboard_text)])
+        elif (stage.get("functional") and not _artifact_present(groups) and
+              not list(report_dir.glob("grp*.html"))):
             record.update(status="BLOCKED", error_class="REPORT_MISSING",
                           missing_artifacts=[str(groups)], reason="functional coverage report was requested")
         else:
@@ -594,7 +635,8 @@ def run_stage(stage, run_dir, execute):
                 record["finished_at"] = time.time()
                 return record
             first = str(command[0])
-            if not (Path(first).is_file() and os.access(first, os.X_OK)) and not shutil.which(first):
+            stage_path = stage.get("environment", {}).get("PATH", os.environ.get("PATH"))
+            if not (Path(first).is_file() and os.access(first, os.X_OK)) and not shutil.which(first, path=stage_path):
                 record.update(status="BLOCKED", error_class="TOOL_UNAVAILABLE",
                               error="required executable is not installed or not on PATH")
                 record["finished_at"] = time.time()
@@ -615,16 +657,17 @@ def run_stage(stage, run_dir, execute):
                     "source_tree_sha256": hashlib.sha256(b"").hexdigest(),
                     "ordered_sources": [],
                 }
+            working_directory = Path(stage.get("cwd", run_dir)).resolve()
             request = make_stage_input(
                 run_id=run_dir.name, stage_id=stage_id,
                 stage_kind=stage.get("stage_kind", stage.get("tool", stage.get("kind", "eda"))),
                 adapter_id=stage.get("adapter_id", "synopsys.%s.%s.v1" %
                                       (stage.get("tool", "project"), stage.get("name", "stage"))),
-                project=project, argv=command, cwd=run_dir,
+                project=project, argv=command, cwd=working_directory,
                 output_dir=run_dir, expected_artifacts=expected,
                 dependencies=stage.get("dependencies", []), timeout=stage.get("timeout") or 1800,
-                seed=stage.get("seed"), environment={})
-            process = run_process(request, cwd=run_dir, log_path=log, execute=True,
+                seed=stage.get("seed"), environment=stage.get("environment", {}))
+            process = run_process(request, cwd=working_directory, log_path=log, execute=True,
                                   adapter_supported=stage.get("adapter_supported", True))
             record["return_code"] = process["return_code"]
             record["process_status"] = process["status"]
@@ -655,6 +698,22 @@ def run_stage(stage, run_dir, execute):
             else:
                 record["status"] = "BLOCKED" if _license_failure(log) else "FAIL"
                 record["error_class"] = "LICENSE_UNAVAILABLE" if _license_failure(log) else "TOOL_EXECUTION_FAILED"
+            if record["status"] == "PASS":
+                failed_patterns = [pattern for pattern in stage.get("fail_patterns", [])
+                                   if re.search(pattern, output)]
+                missing_patterns = [pattern for pattern in stage.get("pass_patterns", [])
+                                    if not re.search(pattern, output)]
+                expected_tests = stage.get("expected_tests", [])
+                missing_tests = [name for name in expected_tests if name not in output]
+                record["failed_patterns"] = failed_patterns
+                record["missing_patterns"] = missing_patterns
+                record["missing_tests"] = missing_tests
+                if failed_patterns:
+                    record.update(status="FAIL", error_class="RESULT_CHECK_FAILED",
+                                  reason="configured failure pattern matched")
+                elif missing_patterns or missing_tests:
+                    record.update(status="BLOCKED", error_class="RESULT_MARKER_MISSING",
+                                  reason="required pass marker or test name was absent")
             check_path = stage.get("design_check_artifact")
             if check_path and record["status"] == "PASS":
                 check_file = Path(check_path)
@@ -726,9 +785,10 @@ def _stage_contract_files(stage, record, run_dir, run_id, project, dependencies,
         stage_kind=stage.get("stage_kind", stage.get("kind", stage.get("tool", "eda"))),
         adapter_id=stage.get("adapter_id", "synopsys.%s.%s.v1" %
                               (stage.get("tool", "project"), stage.get("name", "stage"))),
-        project=project, argv=command, cwd=run_dir, output_dir=run_dir,
+        project=project, argv=command, cwd=Path(stage.get("cwd", run_dir)).resolve(), output_dir=run_dir,
         expected_artifacts=expected, dependencies=stage.get("dependencies", []),
-        timeout=stage.get("timeout") or 1800, seed=stage.get("seed"), input_artifacts=input_artifacts,
+        timeout=stage.get("timeout") or 1800, seed=stage.get("seed"),
+        environment=stage.get("environment", {}), input_artifacts=input_artifacts,
         budget_seconds=budget_seconds)
     input_path = contract_dir / (stage_id + ".input.v1.json")
     save_json(input_path, request)
