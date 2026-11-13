@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:aicflow:stage-result:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "run_id", "stage_id", "status", "error_class", "adapter_id", "adapter_supported", "exit_code", "started_at", "finished_at", "source_revision", "tool_versions", "metrics", "metric_provenance", "artifacts", "message"],
+  "properties": {
+    "contract_version": {"const": "1.0"},
+    "run_id": {"type": "string"},
+    "stage_id": {"type": "string"},
+    "status": {"enum": ["PASS", "FAIL", "ERROR", "BLOCKED", "NOT_RUN", "SKIPPED"]},
+    "error_class": {"type": ["string", "null"]},
+    "adapter_id": {"type": "string", "minLength": 1},
+    "adapter_supported": {"type": "boolean"},
+    "exit_code": {"type": ["integer", "null"]},
+    "started_at": {"type": "string"},
+    "finished_at": {"type": "string"},
+    "source_revision": {"type": "string"},
+    "tool_versions": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+    "metrics": {"type": "object"},
+    "metric_provenance": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["artifact", "parser_id", "parser_version"],
+        "properties": {
+          "artifact": {"type": "string", "minLength": 1},
+          "parser_id": {"type": "string", "minLength": 1},
+          "parser_version": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "message": {"type": ["string", "null"]}
+  },
+  "allOf": [{"if": {"properties": {"status": {"const": "PASS"}}, "required": ["status"]}, "then": {"properties": {"adapter_supported": {"const": true}, "exit_code": {"const": 0}, "artifacts": {"minItems": 1}}}}],
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "size_bytes", "sha256", "producer_stage", "role"],
+      "properties": {
+        "path": {"type": "string"},
+        "kind": {"enum": ["file", "directory"]},
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"},
+        "producer_stage": {"type": "string"},
+        "role": {"type": "string"}
+      }
+    }
+  }
+}
