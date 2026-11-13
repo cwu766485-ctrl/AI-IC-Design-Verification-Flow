@@ -51,6 +51,28 @@ python3 "$EDA_SCRIPT" resume --run-id <run-id> --execute
 python3 "$EDA_SCRIPT" report --run-id <run-id>
 ```
 
+The repository-root `./aicflow` wrapper exposes the same execution runtime
+for composed stage graphs. Current sequential graphs include VCS compile to
+simulation/regression and URG, DC synthesis to PrimeTime STA, and a combined
+verification plus synthesis run:
+
+```bash
+./aicflow plan --flow rtl_to_regression
+./aicflow run --flow rtl_to_regression --execute
+./aicflow run --flow rtl_to_synth_sta --execute
+./aicflow run --flow rtl_to_sim_synth --from vcs_compile --to dc_synthesis --execute
+./aicflow resume --run-id <run-id> --execute
+./aicflow report --run-id <run-id> --log-tail 50
+```
+
+`--from`/`--to` select a topological interval and preserve required
+dependencies. The generic scheduler is sequential. It uses the shared
+versioned Stage Input/Result boundary and verified content cache described in
+[`unified-execution-contract.md`](../../docs/architecture/unified-execution-contract.md).
+The EDA runner uses the current project worktree; it does not create a source
+snapshot. `rtl_ppa.py` uses the shared process boundary while retaining
+candidate snapshot, patch, metric, and campaign-budget policy.
+
 Dry run and planning only generate commands and return `NOT_RUN`; execution
 requires `--execute`. A run writes to a unique `runs/<run-id>/` with Tcl,
 filelists, logs, run manifest, unified metrics JSON, and hashes/inventories of
@@ -74,6 +96,11 @@ power signoff, StarRC, TestMAX insertion/ATPG, and other legacy flows are
 unsupported or planning/templates until separately validated adapters exist.
 See [flow capabilities](../../docs/eda-adapter-capabilities.md) and the
 [host tool matrix](../../docs/tool-capability-matrix.md).
+
+The example at `examples/r1_dag_smoke/` uses explicitly mocked executables.
+It demonstrates graph execution, cache reuse, and input invalidation, not RTL
+simulation correctness or Synopsys tool behavior. Python-only CI results must
+not be presented as licensed-tool validation.
 
 `PASS` means the configured stage completed and its implemented required
 evidence checks passed; it is not a design or signoff claim. Default DC power

@@ -4,7 +4,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +14,9 @@ EDA = ROOT / "skills/eda-tool-engineering/scripts/eda.py"
 FLOW = ROOT / "aicflow"
 sys.path.insert(0, str(EDA.parent))
 from eda_runtime import _urg_metrics, parse_power, run_stage
+from eda_config import load
+import eda_runner
+import flow_engine
 
 
 class MilestoneOne(unittest.TestCase):
@@ -101,7 +106,10 @@ for name in ('netlist.v','area.rpt','timing.rpt','check_design.rpt'):
         self.assertNotEqual(fail.returncode, 0)
         self.assertTrue(fail.stdout, fail.stderr)
         data = json.loads(fail.stdout)
-        self.assertEqual([x["status"] for x in data["stages"]], ["FAIL", "BLOCKED"])
+        by_id = {x["id"]: x for x in data["stages"]}
+        self.assertEqual(by_id["vcs_compile"]["status"], "FAIL")
+        self.assertEqual(by_id["dc_synthesis"]["status"], "PASS")
+        self.assertEqual(by_id["vcs_simulate_default"]["status"], "SKIPPED")
         run_id = data["run_id"]
         vcs.write_text("#!/bin/sh\nif [ \"$1\" = -version ] || [ \"$1\" = -ID ]; then echo fake-vcs-1; exit 0; fi\nwhile [ \"$1\" != -o ]; do shift; done\nshift\nprintf '#!/bin/sh\\necho TEST PASSED\\n' > \"$1\"\nchmod +x \"$1\"\n")
         resumed = self.call(FLOW, "resume", "--run-id", run_id, "--execute")
@@ -124,7 +132,9 @@ for name in ('netlist.v','area.rpt','timing.rpt','check_design.rpt'):
     def test_invalid_config_and_cache(self):
         planned = self.call(FLOW, "plan", "--flow", "rtl_to_sim_synth")
         self.assertEqual(planned.returncode, 0, planned.stderr)
-        self.assertEqual([x["status"] for x in json.loads(planned.stdout)["stages"]], ["NOT_RUN", "NOT_RUN"])
+        planned_stages = json.loads(planned.stdout)["stages"]
+        self.assertTrue(all(x["status"] == "NOT_RUN" for x in planned_stages))
+        self.assertIn("dc_synthesis", [x["id"] for x in planned_stages])
         first = self.call(FLOW, "run", "--flow", "rtl_to_sim", "--execute")
         self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
         second = self.call(FLOW, "run", "--flow", "rtl_to_sim", "--execute")
@@ -327,7 +337,82 @@ Error: incomplete characterization
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         plan = json.loads(result.stdout)
         self.assertEqual(plan["status"], "NOT_RUN")
-        self.assertEqual([stage["name"] for stage in plan["stages"]], ["regression"])
+        self.assertEqual([stage["id"] for stage in plan["stages"]],
+                         ["vcs_compile", "vcs_simulate_default", "simulation_result_default"])
+
+    def test_ssh_runner_forwards_dag_slice_and_budgets_without_local_fallback(self):
+        config = self.root / "eda.yaml"
+        config.write_text(config.read_text() + "\nrunner:\n  kind: ssh\n  host: approved-runner\n  project_root: /work/chip\n  python: python3\n")
+        cfg = load(config)
+        (self.root / ".gitignore").write_text("runs/\n")
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+        subprocess.run(["git", "config", "user.name", "Fixture"], cwd=self.root, check=True)
+        subprocess.run(["git", "config", "user.email", "fixture@example.invalid"], cwd=self.root, check=True)
+        subprocess.run(["git", "add", "."], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "remote runner fixture"], cwd=self.root, check=True)
+        local_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
+        original_run = subprocess.run
+        ssh_commands = []
+
+        def fake_ssh(host, timeout, remote_command):
+            ssh_commands.append(remote_command)
+            if "EDA_REMOTE_EXECUTION=1" in remote_command:
+                return SimpleNamespace(returncode=0, stdout='{"status":"PASS","run_id":"remote_slice"}\n', stderr="")
+            response = {"sha": local_sha, "dirty": False,
+                        "config_sha256": eda_runner._sha256(config)}
+            return SimpleNamespace(returncode=0, stdout=json.dumps(response) + "\n", stderr="")
+
+        def fake_subprocess_run(argv, **kwargs):
+            if argv[0] == "fake-scp":
+                destination = Path(argv[-1])
+                destination.mkdir(parents=True, exist_ok=True)
+                (destination / "manifest.json").write_text(json.dumps({"status": "PASS", "run_id": "remote_slice"}))
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return original_run(argv, **kwargs)
+
+        run_dir = self.root / "runs/remote_slice"
+        with patch.object(eda_runner, "_ssh", side_effect=fake_ssh), \
+                patch.object(eda_runner.shutil, "which", return_value="fake-scp"), \
+                patch.object(eda_runner.subprocess, "run", side_effect=fake_subprocess_run):
+            result = eda_runner.execute_remote(self.root, cfg,
+                                               "rtl_to_sim_synth", "remote_slice", run_dir,
+                                               start="vcs_compile", end="dc_synthesis", budget_seconds=600)
+            first_remote = ssh_commands[-1]
+            resumed = eda_runner.execute_remote(self.root, cfg, "rtl_to_sim_synth", "remote_slice", run_dir,
+                                                command="resume", start="pt_sta", end="pt_sta",
+                                                budget_seconds=300)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["runner"]["kind"], "ssh")
+        self.assertEqual(result["runner"]["remote_return_code"], 0)
+        self.assertTrue((run_dir / "remote-run.log").is_file())
+        self.assertIn("--from vcs_compile", first_remote)
+        self.assertIn("--to dc_synthesis", first_remote)
+        self.assertIn("--budget-seconds 600", first_remote)
+        self.assertEqual(resumed["status"], "PASS")
+        self.assertIn("eda.py resume", ssh_commands[-1])
+        self.assertIn("--from pt_sta", ssh_commands[-1])
+        self.assertIn("--budget-seconds 300", ssh_commands[-1])
+
+    def test_composite_flow_routes_ssh_execution_without_local_fallback(self):
+        config = self.root / "eda.yaml"
+        config.write_text(config.read_text() + "\nrunner:\n  kind: ssh\n  host: approved-runner\n  project_root: /work/chip\n")
+        previous_cwd = Path.cwd()
+        try:
+            os.chdir(self.root)
+            with patch.dict(os.environ, {"EDA_REMOTE_EXECUTION": ""}), \
+                    patch.object(flow_engine, "execute_remote",
+                                 return_value={"status": "PASS", "run_id": "ssh-run"}) as remote:
+                rc = flow_engine.main(["run", "--flow", "rtl_to_sim_synth", "--from", "vcs_compile",
+                                       "--to", "dc_synthesis", "--execute", "--run-id", "ssh-run",
+                                       "--budget-seconds", "60"])
+        finally:
+            os.chdir(previous_cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual(remote.call_args.args[2:4], ("rtl_to_sim_synth", "ssh-run"))
+        self.assertEqual(remote.call_args.kwargs["start"], "vcs_compile")
+        self.assertEqual(remote.call_args.kwargs["end"], "dc_synthesis")
+        self.assertEqual(remote.call_args.kwargs["budget_seconds"], 60)
+        self.assertFalse((self.root / "runs/ssh-run").exists())
 
     def test_missing_project_config_is_not_silently_initialized(self):
         config = self.root / "eda.yaml"
@@ -362,6 +447,35 @@ script = Path(sys.argv[sys.argv.index('-f')+1]); out = script.parent
         self.assertIn("read_verilog {" + str(self.root / "netlist.v") + "}", script)
         self.assertIn("read_sdc", script)
         self.assertIn("link_design", script)
+
+    def test_dc_to_pt_uses_shared_dag_and_verified_cache(self):
+        config = self.root / "eda.yaml"
+        config.write_text(config.read_text() + "\n  sta: {tool: pt}\n")
+        pt = self.root / "bin/pt_shell"
+        pt.write_text("""#!/usr/bin/env python3
+import sys
+from pathlib import Path
+if '-version' in sys.argv: print('fake pt 1'); sys.exit(0)
+script = Path(sys.argv[sys.argv.index('-f')+1]); out = script.parent
+(out/'qor.rpt').write_text('Design WNS: -0.1\\nDesign TNS: -0.2\\n')
+(out/'timing.rpt').write_text('timing paths\\n')
+(out/'constraints.rpt').write_text('No constraint violations\\n')
+""")
+        pt.chmod(0o755)
+        planned = self.call(FLOW, "plan", "--flow", "rtl_to_synth_sta",
+                            "--from", "dc_synthesis", "--to", "pt_sta")
+        self.assertEqual(planned.returncode, 0, planned.stderr + planned.stdout)
+        run = self.call(FLOW, "run", "--flow", "rtl_to_synth_sta", "--execute")
+        self.assertEqual(run.returncode, 0, run.stderr + run.stdout)
+        result = json.loads(run.stdout)
+        stages = {item["id"]: item for item in result["stages"]}
+        self.assertEqual(stages["dc_synthesis"]["status"], "PASS")
+        self.assertEqual(stages["pt_sta"]["status"], "PASS")
+        self.assertEqual(stages["pt_sta"]["dependencies"], ["dc_synthesis"])
+        partial = self.call(FLOW, "run", "--flow", "rtl_to_synth_sta", "--from", "pt_sta",
+                            "--to", "pt_sta", "--execute")
+        self.assertEqual(partial.returncode, 0, partial.stderr + partial.stdout)
+        self.assertEqual(json.loads(partial.stdout)["efficiency"]["cache_hits"], 2)
 
     def test_missing_artifact_exit_code_license_and_unsupported_adapter(self):
         missing = run_stage({"name": "missing", "command": [sys.executable, "-c", "pass"],

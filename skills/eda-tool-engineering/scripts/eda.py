@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Project EDA API/CLI with normalized run evidence."""
-import argparse, datetime as dt, json, os, re, shutil, subprocess, sys, tempfile
+import argparse, datetime as dt, json, os, re, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 from eda_config import ConfigError, load, resolve, sources
-from eda_runtime import artifact_record, build_stages, execute_plan, manifest as make_manifest, save, parse_qor, parse_power, sha256, tool_version
+from eda_runtime import (_attempts_charged, artifact_record, build_stages, execute_plan, manifest as make_manifest,
+                         parse_power, parse_qor, project_contract, save, sha256, tool_version)
 from eda_runner import RunnerError, execute_remote, runner_config
 
 HOME_DEFAULTS = {
@@ -297,7 +298,7 @@ def init_config(root, name=None, top=None, force=False):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="eda.py")
     ap.add_argument("command", choices=["init", "doctor", "plan", "run", "report", "validate", "resume"])
-    ap.add_argument("--flow", choices=sorted(set(FLOW_TOOL) | {"rtl_to_sim", "rtl_to_regression", "rtl_to_synth", "rtl_to_sim_synth"}))
+    ap.add_argument("--flow", choices=sorted(set(FLOW_TOOL) | {"rtl_to_sim", "rtl_to_regression", "rtl_to_synth", "rtl_to_synth_sta", "rtl_to_sim_synth"}))
     ap.add_argument("--tool", choices=sorted(HOME_DEFAULTS))
     ap.add_argument("--name")
     ap.add_argument("--top")
@@ -305,6 +306,10 @@ def main(argv=None):
     ap.add_argument("--execute", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--run-id")
+    ap.add_argument("--from", dest="start_stage")
+    ap.add_argument("--to", dest="end_stage")
+    ap.add_argument("--budget-seconds", type=float)
+    ap.add_argument("--log-tail", nargs="?", const=50, type=int)
     args = ap.parse_args(argv)
     root = project_root()
     if args.command == "init":
@@ -314,12 +319,26 @@ def main(argv=None):
         forwarded = ["resume" if args.command == "resume" else "report", "--run-id", args.run_id or ""]
         if args.execute and args.command == "resume":
             forwarded.append("--execute")
+        if args.start_stage:
+            forwarded += ["--from", args.start_stage]
+        if args.end_stage:
+            forwarded += ["--to", args.end_stage]
+        if args.budget_seconds is not None:
+            forwarded += ["--budget-seconds", str(args.budget_seconds)]
+        if args.log_tail is not None and args.command == "report":
+            forwarded += ["--log-tail", str(args.log_tail)]
         return flow_main(forwarded)
-    if args.command in ("plan", "run") and args.flow in {"rtl_to_sim", "rtl_to_regression", "rtl_to_synth", "rtl_to_sim_synth"}:
+    if args.command in ("plan", "run") and args.flow in {"rtl_to_sim", "rtl_to_regression", "rtl_to_synth", "rtl_to_synth_sta", "rtl_to_sim_synth"}:
         from flow_engine import main as flow_main
         forwarded = [args.command, "--flow", args.flow]
         if args.run_id:
             forwarded += ["--run-id", args.run_id]
+        if args.start_stage:
+            forwarded += ["--from", args.start_stage]
+        if args.end_stage:
+            forwarded += ["--to", args.end_stage]
+        if args.budget_seconds is not None:
+            forwarded += ["--budget-seconds", str(args.budget_seconds)]
         if args.command == "run" and args.execute and not args.dry_run:
             forwarded.append("--execute")
         return flow_main(forwarded)
@@ -382,11 +401,16 @@ def main(argv=None):
         print(json.dumps({"status": "BLOCKED", "error": f"run already exists: {run_dir}"}), file=sys.stderr)
         return 2
     execute = args.command == "run" and args.execute and not args.dry_run
+    if args.budget_seconds is not None and args.budget_seconds <= 0:
+        ap.error("--budget-seconds must be positive")
+    started = time.time()
     if execute and args.flow in EXECUTABLE_FLOWS and os.environ.get("EDA_REMOTE_EXECUTION") != "1":
         try:
             runner = runner_config(cfg)
             if runner.get("kind") == "ssh":
-                result = execute_remote(root, cfg, args.flow, run_id, run_dir)
+                result = execute_remote(root, cfg, args.flow, run_id, run_dir,
+                                        start=args.start_stage, end=args.end_stage,
+                                        budget_seconds=args.budget_seconds)
                 print(json.dumps(result, indent=2))
                 return 0 if result.get("status") == "PASS" else 1
         except RunnerError as exc:
@@ -401,7 +425,38 @@ def main(argv=None):
     if args.flow in EXECUTABLE_FLOWS:
         try:
             inputs, stages, options = build_stages(args.flow, root, cfg, run_dir, exe)
-            records = execute_plan(stages, run_dir, execute)
+            cache_inputs = [config_path, *inputs.get("rtl", []), *inputs.get("filelists", []),
+                            *inputs.get("include_dirs", []), Path(__file__).resolve(),
+                            Path(__file__).with_name("eda_runtime.py"),
+                            Path(__file__).with_name("eda_config.py"),
+                            Path(__file__).with_name("stage_runtime.py"),
+                            Path(__file__).with_name("flow_engine.py")]
+            def gather_paths(value):
+                if isinstance(value, dict):
+                    for nested in value.values(): gather_paths(nested)
+                elif isinstance(value, list):
+                    for nested in value: gather_paths(nested)
+                elif isinstance(value, str):
+                    if not value.strip(): return
+                    candidate = Path(value)
+                    if not candidate.is_absolute(): candidate = root / candidate
+                    if candidate.exists(): cache_inputs.append(candidate)
+            gather_paths(options)
+            pdk = cfg.get("pdk", {})
+            if isinstance(pdk, dict):
+                pdk_root = root / pdk.get("root", ".")
+                for name in [pdk.get("target_library"), *pdk.get("link_libraries", [])]:
+                    if name:
+                        candidate = Path(name)
+                        cache_inputs.append(candidate if candidate.is_absolute() else pdk_root / candidate)
+            if cfg.get("constraints"):
+                candidate = Path(cfg["constraints"])
+                cache_inputs.append(candidate if candidate.is_absolute() else root / candidate)
+            stage_project = project_contract(root, cfg, inputs, stages, cache_inputs)
+            records = execute_plan(stages, run_dir, execute, root=root, run_id=run_id,
+                                   project=stage_project, cache_inputs=cache_inputs,
+                                   start=args.start_stage, end=args.end_stage,
+                                   budget_seconds=args.budget_seconds if args.budget_seconds is not None else float("inf"))
             result = make_manifest(root, run_id, args.flow, tool, exe, inputs, stages, options, records, run_dir)
             result["project"] = cfg["name"]
             result["config"] = str(config_path)
@@ -438,6 +493,14 @@ def main(argv=None):
                                               "tests_failed": sum(1 for item in test_results if item.get("status") == "FAIL"),
                                               "seeds": [item.get("seed") for item in test_results]}
             result["metrics"] = metrics
+            result["efficiency"] = {"workflow_elapsed_sec": round(time.time() - started, 6),
+                                    "eda_stage_elapsed_sec": round(sum(x.get("elapsed_sec", 0) for x in records), 6),
+                                    "stage_count": sum(1 for x in records if x.get("status") != "NOT_RUN"),
+                                    "tool_invocations": sum(1 for x in records if x.get("return_code") is not None and not x.get("cache_hit") and not x.get("checkpoint_reuse")),
+                                    "cache_hits": sum(1 for x in records if x.get("cache_hit")),
+                                    "checkpoint_reuses": sum(1 for x in records if x.get("checkpoint_reuse")),
+                                    "agent_invocations": None,
+                                    "token_usage": None}
             metrics_path = run_dir / "metrics.json"
             save(metrics_path, {"schema_version": 1, "run_id": run_id, "flow": args.flow,
                                 "status": result["status"], "metrics": metrics,
@@ -448,6 +511,12 @@ def main(argv=None):
             result = {"run_id": run_id, "flow": args.flow, "status": "BLOCKED",
                       "error_class": "CONFIG_INVALID", "error": str(exc)}
         save(run_dir / "manifest.json", result)
+        save(run_dir / "checkpoint.json", {"schema_version": 2, "run_id": run_id,
+             "project": cfg.get("name", root.name), "flow": args.flow, "status": result["status"],
+             "stages": result.get("stages", []), "manifest": str(run_dir / "manifest.json"),
+             "budget_seconds": args.budget_seconds,
+             "budget_charged_seconds": round(_attempts_charged(run_dir / "attempts.jsonl"), 6),
+             "updated_at": time.time()})
         print(json.dumps(result, indent=2))
         return 0 if not (args.command == "run" and args.execute and not args.dry_run) or result["status"] == "PASS" else 1
     if args.flow in SCRIPT_ONLY_FLOWS:

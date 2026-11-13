@@ -1,0 +1,18 @@
+name: r1_mocked_fifo
+top: fifo
+rtl:
+  - rtl/fifo.sv
+filelists: []
+include_dirs: []
+defines: []
+pdk:
+  root: assets
+  target_library: fake_cells.db
+constraints: constraints/fifo.sdc
+flows:
+  sim:
+    tb: tb/tb_fifo.sv
+    top: tb_fifo
+    seed: 17
+  synth: {}
+  sta: {tool: pt}

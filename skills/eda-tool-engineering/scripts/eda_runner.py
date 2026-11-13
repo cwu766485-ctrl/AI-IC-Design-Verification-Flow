@@ -68,7 +68,8 @@ def _ssh(host, timeout, remote_command):
     return proc
 
 
-def execute_remote(root, cfg, flow, run_id, run_dir):
+def execute_remote(root, cfg, flow, run_id, run_dir, *, command="run", start=None,
+                   end=None, budget_seconds=None):
     """Run the canonical eda.py command in a matching clean remote checkout.
 
     The remote project, PDK/library assets and output filesystem remain under
@@ -109,25 +110,43 @@ def execute_remote(root, cfg, flow, run_id, run_dir):
     if remote.get("config_sha256") != _sha256(config_path):
         raise RunnerError("remote eda.yaml does not match the local configuration")
 
+    if command not in ("run", "resume"):
+        raise RunnerError("SSH runner supports run and resume commands only")
     remote_eda = remote_root + "/skills/eda-tool-engineering/scripts/eda.py"
-    argv = [config["python"], remote_eda, "run", "--flow", flow,
-            "--execute", "--run-id", run_id]
+    if command == "run":
+        argv = [config["python"], remote_eda, "run", "--flow", flow,
+                "--execute", "--run-id", run_id]
+    else:
+        argv = [config["python"], remote_eda, "resume", "--execute", "--run-id", run_id]
+    if start:
+        argv += ["--from", start]
+    if end:
+        argv += ["--to", end]
+    if budget_seconds is not None:
+        argv += ["--budget-seconds", str(budget_seconds)]
     shell_argv = " ".join(shlex.quote(str(item)) for item in argv)
-    command = "cd %s && EDA_REMOTE_EXECUTION=1 %s" % (remote_root_q, shell_argv)
-    result = _ssh(config["host"], config["connect_timeout_sec"], command)
-    if result.returncode:
-        detail = None
+    remote_command = "cd %s && EDA_REMOTE_EXECUTION=1 %s" % (remote_root_q, shell_argv)
+    result = _ssh(config["host"], config["connect_timeout_sec"], remote_command)
+    remote_result = None
+    try:
         try:
-            candidate = json.loads(result.stdout)
-            detail = candidate.get("error") or candidate.get("reason")
-        except (ValueError, TypeError):
-            pass
-        raise RunnerError(detail or "remote EDA command failed; inspect its remote run log")
+            remote_result = json.loads(result.stdout)
+        except ValueError:
+            remote_result = json.loads(result.stdout.strip().splitlines()[-1])
+    except (ValueError, TypeError, IndexError):
+        remote_result = None
+    valid_statuses = ("PASS", "FAIL", "ERROR", "BLOCKED", "NOT_RUN", "SKIPPED")
+    if result.returncode and (not isinstance(remote_result, dict) or
+                              remote_result.get("status") not in valid_statuses):
+        detail = (remote_result or {}).get("error") or (remote_result or {}).get("reason")
+        raise RunnerError(detail or "remote EDA command failed without a structured result")
+    if result.returncode and remote_result.get("status") in ("PASS", "NOT_RUN"):
+        raise RunnerError("remote command exit code conflicts with its structured result")
     scp = shutil.which("scp")
     if not scp:
         raise RunnerError("SSH execution finished remotely, but scp is unavailable to retrieve evidence")
     remote_run = "%s:%s/runs/%s/." % (config["host"], remote_root, run_id)
-    run_dir.mkdir(parents=True, exist_ok=False)
+    run_dir.mkdir(parents=True, exist_ok=(command == "resume"))
     try:
         fetched = subprocess.run([scp, "-r", remote_run, str(run_dir)], stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, universal_newlines=True,
@@ -142,6 +161,8 @@ def execute_remote(root, cfg, flow, run_id, run_dir):
     if manifest_path.is_file():
         try:
             manifest = json.loads(manifest_path.read_text())
+            if remote_result is not None and manifest.get("status") != remote_result.get("status"):
+                raise RunnerError("retrieved manifest status differs from the remote command result")
             def rewrite(value):
                 if isinstance(value, str):
                     return value.replace(remote_root, str(root))
@@ -153,7 +174,8 @@ def execute_remote(root, cfg, flow, run_id, run_dir):
             manifest = rewrite(manifest)
             manifest["runner"] = {"kind": "ssh", "host": config["host"],
                                   "remote_project_root": remote_root,
-                                  "evidence_fetch": "PASS"}
+                                  "evidence_fetch": "PASS",
+                                  "remote_return_code": result.returncode}
             manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         except (OSError, ValueError):
             raise RunnerError("remote run did not return a valid manifest")

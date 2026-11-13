@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:aicflow:stage-input:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "run_id", "stage_id", "stage_kind", "adapter_id", "project", "argv", "environment", "working_directory", "output_directory", "expected_artifacts", "dependencies", "timeout_seconds", "budgets"],
+  "properties": {
+    "contract_version": {"const": "1.0"},
+    "run_id": {"type": "string", "minLength": 1},
+    "stage_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+    "stage_kind": {"type": "string", "minLength": 1},
+    "adapter_id": {"type": "string", "minLength": 1},
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "source_revision", "source_tree_sha256", "ordered_sources"],
+      "properties": {
+        "name": {"type": "string"},
+        "source_revision": {"type": "string"},
+        "source_tree_sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"},
+        "design_top": {"type": ["string", "null"]},
+        "testbench_top": {"type": ["string", "null"]},
+        "ordered_sources": {"type": "array", "items": {"type": "string"}},
+        "filelists": {"type": "array", "items": {"type": "string"}},
+        "includes": {"type": "array", "items": {"type": "string"}},
+        "defines": {"type": "object", "additionalProperties": {"type": "string"}},
+        "constraints": {"$ref": "#/$defs/hashed_inputs"},
+        "libraries": {"$ref": "#/$defs/hashed_inputs"}
+      }
+    },
+    "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "environment": {"type": "object", "additionalProperties": {"type": "string"}},
+    "working_directory": {"type": "string", "minLength": 1},
+    "output_directory": {"type": "string", "minLength": 1},
+    "expected_artifacts": {"type": "array", "items": {"type": "string"}},
+    "dependencies": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}},
+    "input_artifacts": {"type": "array", "items": {"type": "object", "required": ["path", "sha256"], "properties": {"path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}}, "additionalProperties": false}},
+    "seed": {"type": ["integer", "null"]},
+    "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+    "budgets": {"type": "object", "required": ["run_remaining_seconds"], "properties": {"run_remaining_seconds": {"type": ["number", "null"], "minimum": 0}}, "additionalProperties": false}
+  },
+  "$defs": {
+    "hashed_input": {"type": "object", "required": ["path", "sha256"], "properties": {"path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}}, "additionalProperties": false},
+    "hashed_inputs": {"type": "array", "items": {"$ref": "#/$defs/hashed_input"}}
+  }
+}
