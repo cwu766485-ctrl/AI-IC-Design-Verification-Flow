@@ -6,6 +6,9 @@ evidence. The project snapshot used for the generated plan is NMAForge HEAD
 `c290eba7697138a4fcf2cbbac9262264849f0aeb`; source hashes are embedded in the
 generated JSON plan.
 
+The R1/M3 overlap and GitHub branch disposition are recorded in
+[`branch-reconciliation.md`](branch-reconciliation.md).
+
 ## Plan result
 
 The curated plan maps six DMA feature groups into seven stable testpoints and
