@@ -93,24 +93,28 @@ measured throughput or timing evidence. The benchmark run log SHA-256 is
 ## ASIC PPA Blockers
 
 VCS (`V-2023.12-SP1`), Design Compiler (`V-2023.12-SP1`) and PrimeTime
-(`V-2023.12-SP2`) executables are installed. No approved target-specific
-standard-cell library, SRAM timing library or SDC is available in the public
-NMAForge worktree or configured environment. `TSMC28_STDCELL_DB` and
-`TSMC28_SRAM_DB_TT` are unset. `syn/README.md` states that the library views,
-macro adapter, technology constraints and generated reports belong to a
-private ASIC overlay. The checked-in synthesis report describes a historical
-`ai_accel_top` result, not this standalone matrix-core target, and cannot
-provide its area or timing baseline.
+(`V-2023.12-SP2`) executables are installed. A private TSMC 28 nm RVT
+standard-cell timing library, physical LEF, SRAM views, and RC extraction tables
+are present on the local host outside this repository. The local setup script
+exposes a slow-corner standard-cell view by default. These assets are not copied
+to this repository; approval for using a specific library/corner in this
+project has not been established. `TSMC28_STDCELL_DB` and `TSMC28_SRAM_DB_TT`
+remain unset in the current shell, so project-specific adapter configuration
+is still required. `syn/README.md` states that library views, macro adapters,
+technology constraints and generated reports belong to a private ASIC overlay.
+The checked-in synthesis report describes a historical `ai_accel_top` result,
+not this standalone matrix-core target, and cannot provide its area or timing
+baseline.
 
 The existing example plan still contains `/path/to/approved/stdcells.db`,
 `/path/to/approved/matrix.sdc`, and `__CONFIGURE_PROJECT_ADAPTER__`; these are
 explicit placeholders, not runnable commands. No target-specific SDC defines
 the matrix-core clock, input/output delays, loads, driving cells, uncertainty,
-or operating corner. The reported 4 ns top-level clock from the historical
-report is not automatically applicable to this block. DC and PrimeTime were
-not run. Power was not run because there is no approved mapped netlist/library
-pair or workload-annotated activity input for this target. No area, WNS, ASIC
-frequency, or power metric is claimed.
+or approved operating corner. The reported 4 ns top-level clock from the
+historical report is not automatically applicable to this block. DC and
+PrimeTime were not run. Power was not run because there is no approved mapped
+netlist/library pair or workload-annotated activity input for this target. No
+area, WNS, ASIC frequency, or power metric is claimed.
 
 The mandatory approved functional/equivalence policy for a candidate is also
 not yet attached to this project plan. The existing VCS golden regression is
@@ -120,15 +124,36 @@ behavioral contract and proof gate, cycle-equivalence is not assumed.
 
 Required inputs to unblock a real baseline:
 
-- owner-approved standard-cell and SRAM timing views for a named PVT corner;
+- owner approval of the locally available standard-cell timing view and, if
+  instantiated, SRAM timing views for a named PVT corner;
 - a reviewed standalone matrix-core SDC with clock and IO assumptions;
 - the matching technology setup and synthesis/STA scripts;
 - an approved candidate functional/equivalence gate and its acceptance policy;
 - workload activity plus a reviewed power methodology, only if power remains
   a mandatory metric.
 
-The next action while these are unavailable is STOP. No candidate count was
-consumed and no candidate was evaluated.
+For the ASIC PPA campaign, the required action while these inputs are
+unavailable remains STOP; no ASIC candidate count is consumed and no ASIC
+candidate has been evaluated.
+
+## Simulation-Performance Iteration
+
+The simulation-only contract is now explicit in the RTL PPA plan validator.
+It accepts only transaction-level behavior with regression, reference-model,
+latency-gate and performance stages, and workload-cycle/MAC-per-cycle metrics.
+It rejects ASIC synthesis, STA, power and formal stages. This shares the plan
+and validation contract with the existing evaluator; ASIC requests remain
+strict and are never downgraded automatically.
+
+At NMAForge revision `409c3a9fd647d4f8c4c881c9bfdaf5d93b7076ee`, the three
+seed VCS regression and fixed five-workload benchmark were reproduced in a
+detached temporary worktree. Results, source hashes and command details are in
+[`simulation-performance-campaign.md`](simulation-performance-campaign.md).
+One isolated candidate was generated and rejected after the phase-abort
+regression observed premature completion. No candidate performance improvement
+is claimed. Baseline and candidate evidence were executed through Stage Runtime;
+the candidate's downstream performance stages were correctly skipped after the
+regression failure.
 
 ## Optimization Components
 

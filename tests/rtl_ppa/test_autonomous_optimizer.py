@@ -69,6 +69,24 @@ def test_qor_analyzer_accepts_provenanced_metrics_and_structured_hotspots():
     assert result["metrics"] == {"cell_area": 100, "setup_wns": 0.1}
 
 
+def test_qor_analyzer_accepts_simulation_metrics_without_asic_hotspots():
+    provenance = {"artifact": "performance-summary.json",
+                  "parser_id": "nmaforge-matrix-log", "parser_version": "1"}
+    stages = ["regression", "reference_model", "latency_gate", "performance"]
+    evidence = {"status": "PASS", "source_revision": "abc123",
+                "stages": [{"stage": stage, "status": "PASS",
+                            "metric_provenance": ({"workload_cycles": provenance,
+                                                   "macs_per_cycle": provenance}
+                                                  if stage == "performance" else {})}
+                           for stage in stages]}
+    result = optimizer.QoRAnalyzer().analyze(
+        evidence, {"metrics": {"workload_cycles": 2029, "macs_per_cycle": 45.67}},
+        {"workload_cycles": "performance", "macs_per_cycle": "performance"}, stages,
+        optimization_mode="simulation_performance")
+    assert result["baseline_valid"]
+    assert result["metrics"] == {"workload_cycles": 2029, "macs_per_cycle": 45.67}
+
+
 def test_candidate_generator_binds_patch_hash_and_approved_scope(tmp_path):
     patch = valid_patch(tmp_path)
     candidate = optimizer.CandidateGenerator().generate(
@@ -91,6 +109,32 @@ def test_candidate_generator_rejects_scope_and_unknown_hotspot(tmp_path):
     with pytest.raises(optimizer.OptimizationInputError, match="finite nonnegative"):
         generator.generate(proposal, "abc123", valid_patch(tmp_path), ["rtl/**/*.v"],
                            [{"id": "area-decode-0"}])
+
+
+def test_simulation_performance_candidate_uses_workload_metrics_only(tmp_path):
+    proposal = {
+        "optimization_mode": "simulation_performance",
+        "feature_id": "MATRIX-CYCLE-001",
+        "hypothesis": "Avoid the terminal ST_DONE bubble after the final tile.",
+        "target_hotspot": "done-transition-0",
+        "intended_rtl_modification": "Assert completion on the final ST_NEXT transition.",
+        "expected_metric_improvement": {"workload_cycles": {"direction": "lower", "target_pct": 5}},
+        "functional_risks": ["Completion could be asserted before outstanding writes drain."],
+        "timing_risks": ["No ASIC timing claim is made by this experiment."],
+        "required_validation_stages": ["regression", "reference_model", "latency_gate", "performance"],
+        "validation_commands": {stage: ["make", stage] for stage in
+                                ("regression", "reference_model", "latency_gate", "performance")},
+    }
+    candidate = optimizer.CandidateGenerator().generate(
+        proposal, "abc123", valid_patch(tmp_path), ["rtl/compute/matrix/*.v"],
+        [{"id": "done-transition-0"}])
+    assert candidate["expected_metric_improvement"] == proposal["expected_metric_improvement"]
+
+    proposal["expected_metric_improvement"] = {"setup_wns": {"direction": "higher", "target_pct": 5}}
+    with pytest.raises(optimizer.OptimizationInputError, match="only target workload metrics"):
+        optimizer.CandidateGenerator().generate(
+            proposal, "abc123", valid_patch(tmp_path), ["rtl/compute/matrix/*.v"],
+            [{"id": "done-transition-0"}])
 
 
 def test_controller_stops_before_candidate_when_baseline_is_incomplete():
@@ -124,6 +168,32 @@ def test_controller_rejects_functional_regression_but_stops_on_blocker():
         {}, {"candidates_remaining": 2, "runtime_sec": 120})
     assert failed_candidate["decision"] == "REJECT"
     assert blocked_candidate["decision"] == "STOP"
+
+
+def test_controller_rejects_failed_gate_even_when_downstream_stages_are_skipped():
+    baseline = {"baseline_valid": True, "source_revision": "abc123", "blockers": []}
+    stages = [{"stage": "regression", "status": "FAIL"},
+              {"stage": "reference_model", "status": "SKIPPED"},
+              {"stage": "latency_gate", "status": "SKIPPED"},
+              {"stage": "performance", "status": "SKIPPED"}]
+    candidate = {"feature_id": "MATRIX-CYCLE-001", "source_revision": "abc123",
+                 "required_validation_stages": ["regression", "reference_model",
+                                                 "latency_gate", "performance"]}
+    result = optimizer.OptimizationController().decide(
+        baseline, candidate, {"status": "FAIL", "stages": stages}, {},
+        {"candidates_remaining": 2, "runtime_sec": 14370, "retries": 0})
+    assert result["decision"] == "REJECT"
+    assert result["evidence"] == [
+        "candidate failed a required validation gate",
+        "regression stage FAIL: no details",
+        "reference_model stage SKIPPED: no details",
+        "latency_gate stage SKIPPED: no details",
+        "performance stage SKIPPED: no details",
+    ]
+    assert [item["status"] for item in result["stage_evidence"]] == [
+        "FAIL", "SKIPPED", "SKIPPED", "SKIPPED"
+    ]
+    assert result["remaining_budget"]["candidates_remaining"] == 2
 
 
 @pytest.mark.parametrize("status,comparison,retries,stage_status,expected", [

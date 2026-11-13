@@ -1,0 +1,43 @@
+{
+  "feature_id": "MATRIX-CYCLE-001",
+  "decision": "REJECT",
+  "evidence": {
+    "campaign_status": "FAIL",
+    "failed_stage": "regression",
+    "failed_seed": 20261021,
+    "failure": "phase-abort target ST_PREFETCH_WAIT was not reached; candidate had asserted done and returned to IDLE",
+    "runtime_error_class": "COMMAND_FAILED",
+    "dependent_stages": {
+      "reference_model": "SKIPPED",
+      "latency_gate": "SKIPPED",
+      "performance": "SKIPPED"
+    },
+    "candidate_patch_sha256": "537fe77b9214e4b8700110b186bc6c23243e551e9839f2cc8a358868be0389c9",
+    "review_patch_file_sha256": "b48b0c97e6e94b365cb1393b72eb6308ae5908f9f5ebff1e8a2baa57c59a8eaf",
+    "regression_log": "/tmp/nmaforge_m3_stage_runtime_campaign_final/MATRIX-CYCLE-001/stages/regression/command.log"
+  },
+  "proposed_change": "Skip the terminal ST_DONE cycle after the final tile completes.",
+  "patch": "MATRIX-CYCLE-001.diff",
+  "required_validation_commands": {
+    "regression": [
+      "make -C dv/block/compute/matrix/sim core-random-regress 'SEEDS=20261021 20261022 20261023'"
+    ],
+    "reference_model": [
+      "make -C dv/block/compute/matrix/sim core-random-regress 'SEEDS=20261021 20261022 20261023'"
+    ],
+    "latency_gate": [
+      "make -C dv/block/compute/matrix/sim matrix-pipeline-benchmark SEED=20261113 PIPELINE_ARRAY_SIZE=16 PIPELINE_BENCH_OUT=/tmp/matrix-latency"
+    ],
+    "performance": [
+      "make -C dv/block/compute/matrix/sim matrix-pipeline-benchmark SEED=20261113 PIPELINE_ARRAY_SIZE=16 PIPELINE_BENCH_OUT=/tmp/matrix-performance"
+    ]
+  },
+  "expected_impact": {
+    "workload_cycles": "at most one cycle saved per command; below the 5% campaign target",
+    "macs_per_cycle": "small increase if functional behavior is preserved"
+  },
+  "remaining_budget": {
+    "candidates": 2,
+    "runtime_sec": 14371.49
+  }
+}

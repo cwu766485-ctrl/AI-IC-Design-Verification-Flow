@@ -45,7 +45,7 @@ class QoRAnalyzer:
     """Require complete stage and provenance evidence before exposing QoR."""
 
     def analyze(self, evidence, metrics_document, required_metric_stages,
-                required_stages, qor_report=None):
+                required_stages, qor_report=None, optimization_mode="asic_ppa"):
         blockers = []
         if not isinstance(evidence, dict) or evidence.get("status") != "PASS":
             blockers.append("baseline campaign status is not PASS")
@@ -79,18 +79,24 @@ class QoRAnalyzer:
         report = qor_report if isinstance(qor_report, dict) else {}
         critical_paths = report.get("critical_paths", [])
         area_hotspots = report.get("area_hotspots", [])
-        if not isinstance(critical_paths, list) or not critical_paths or not all(
-                isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id") and
-                isinstance(item.get("artifact"), str) and item.get("artifact") and
-                isinstance(item.get("sha256"), str) and len(item["sha256"]) == 64
-                for item in critical_paths):
-            blockers.append("structured critical-path evidence is unavailable")
-        if not isinstance(area_hotspots, list) or not area_hotspots or not all(
-                isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id") and
-                isinstance(item.get("artifact"), str) and item.get("artifact") and
-                isinstance(item.get("sha256"), str) and len(item["sha256"]) == 64
-                for item in area_hotspots):
-            blockers.append("structured area-hotspot evidence is unavailable")
+        if optimization_mode == "asic_ppa":
+            if not isinstance(critical_paths, list) or not critical_paths or not all(
+                    isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id") and
+                    isinstance(item.get("artifact"), str) and item.get("artifact") and
+                    isinstance(item.get("sha256"), str) and len(item["sha256"]) == 64
+                    for item in critical_paths):
+                blockers.append("structured critical-path evidence is unavailable")
+            if not isinstance(area_hotspots, list) or not area_hotspots or not all(
+                    isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id") and
+                    isinstance(item.get("artifact"), str) and item.get("artifact") and
+                    isinstance(item.get("sha256"), str) and len(item["sha256"]) == 64
+                    for item in area_hotspots):
+                blockers.append("structured area-hotspot evidence is unavailable")
+        elif optimization_mode == "simulation_performance":
+            if set(required_metric_stages) != {"workload_cycles", "macs_per_cycle"}:
+                blockers.append("simulation_performance requires only workload-cycle metrics")
+        else:
+            blockers.append("unsupported optimization mode")
         return {
             "baseline_valid": not blockers,
             "source_revision": evidence.get("source_revision") if isinstance(evidence, dict) else None,
@@ -105,7 +111,7 @@ class QoRAnalyzer:
 class CandidateGenerator:
     REQUIRED_FIELDS = (
         "feature_id", "hypothesis", "target_hotspot", "intended_rtl_modification",
-        "expected_ppa_improvement", "functional_risks", "timing_risks",
+        "functional_risks", "timing_risks",
         "required_validation_stages", "validation_commands",
     )
 
@@ -113,7 +119,11 @@ class CandidateGenerator:
                  known_hotspots):
         if not isinstance(proposal, dict):
             raise OptimizationInputError("candidate proposal must be an object")
+        mode = proposal.get("optimization_mode", "asic_ppa")
+        impact_key = "expected_metric_improvement" if mode == "simulation_performance" else "expected_ppa_improvement"
         missing = [key for key in self.REQUIRED_FIELDS if not proposal.get(key)]
+        if not proposal.get(impact_key):
+            missing.append(impact_key)
         if missing:
             raise OptimizationInputError("candidate is missing fields: " + ", ".join(missing))
         for key in ("feature_id", "hypothesis", "target_hotspot", "intended_rtl_modification"):
@@ -149,13 +159,20 @@ class CandidateGenerator:
             if (not isinstance(argv, list) or not argv or
                     not all(isinstance(value, str) and value for value in argv)):
                 raise OptimizationInputError("validation command argv must be a nonempty string list: " + stage)
-        if not isinstance(proposal["expected_ppa_improvement"], dict) or not proposal["expected_ppa_improvement"]:
-            raise OptimizationInputError("expected PPA improvement must be a metric mapping")
-        for metric, target in proposal["expected_ppa_improvement"].items():
+        impact = proposal[impact_key]
+        if not isinstance(impact, dict) or not impact:
+            raise OptimizationInputError("expected improvement must be a metric mapping")
+        allowed_sim_metrics = {"workload_cycles": "lower", "macs_per_cycle": "higher"}
+        if mode == "simulation_performance" and any(
+                metric not in allowed_sim_metrics for metric in impact):
+            raise OptimizationInputError("simulation_performance candidates may only target workload metrics")
+        for metric, target in impact.items():
             if (not isinstance(metric, str) or not metric or not isinstance(target, dict) or
                     target.get("direction") not in ("lower", "higher") or
                     not _finite_number(target.get("target_pct")) or target["target_pct"] < 0):
-                raise OptimizationInputError("PPA targets require a direction and finite nonnegative target_pct")
+                raise OptimizationInputError("targets require a direction and finite nonnegative target_pct")
+            if mode == "simulation_performance" and target["direction"] != allowed_sim_metrics[metric]:
+                raise OptimizationInputError("simulation_performance metric direction is invalid: " + metric)
         return {
             "source_revision": source_revision,
             "patch_path": str(patch_path),
@@ -182,19 +199,22 @@ class OptimizationController:
         if (not blockers and isinstance(baseline, dict) and baseline.get("baseline_valid") is True and
                 candidate and evaluation and bounded and not missing_stages and
                 candidate.get("source_revision") == baseline.get("source_revision")):
-            if evaluation.get("status") == "BLOCKED" or any(
-                    stage_map.get(stage, {}).get("status") in ("BLOCKED", "SKIPPED")
-                    for stage in required_stages):
-                decision, reason = "STOP", "a mandatory validation gate is blocked or failed"
-            elif evaluation.get("status") == "FAIL" or any(
+            if evaluation.get("status") == "FAIL" or any(
                     stage_map.get(stage, {}).get("status") == "FAIL" for stage in required_stages):
                 decision, reason = "REJECT", "candidate failed a required validation gate"
+            elif evaluation.get("status") == "BLOCKED" or any(
+                    stage_map.get(stage, {}).get("status") == "BLOCKED"
+                    for stage in required_stages):
+                decision, reason = "STOP", "a mandatory validation gate is blocked"
             elif evaluation.get("status") == "ERROR" or any(
                     stage_map.get(stage, {}).get("status") == "ERROR" for stage in required_stages):
                 if remaining.get("retries", 0) > 0:
                     decision, reason = "RETRY", "evaluation errored and retry budget remains"
                 else:
                     decision, reason = "STOP", "evaluation errored and retry budget is exhausted"
+            elif any(stage_map.get(stage, {}).get("status") == "SKIPPED"
+                     for stage in required_stages):
+                decision, reason = "STOP", "a required validation stage was skipped"
             elif any(stage_map.get(stage, {}).get("status") != "PASS" for stage in required_stages):
                 decision, reason = "STOP", "a required validation stage has no passing result"
             elif evaluation.get("status") == "PASS":
@@ -213,14 +233,27 @@ class OptimizationController:
             reason = "required candidate validation stages are missing or not PASS: " + ", ".join(missing_stages)
         elif isinstance(baseline, dict) and candidate and candidate.get("source_revision") != baseline.get("source_revision"):
             reason = "candidate source revision does not match the analyzed baseline"
+        stage_evidence = [
+            {key: stage_map.get(stage, {}).get(key)
+             for key in ("stage", "status", "reason", "log", "runtime_error_class")}
+            for stage in required_stages
+            if stage_map.get(stage, {}).get("status") != "PASS"
+        ]
+        evidence = list(blockers) + [reason]
+        evidence.extend("{} stage {}: {}".format(item.get("stage"), item.get("status"),
+                                                  item.get("reason") or item.get("runtime_error_class") or "no details")
+                        for item in stage_evidence)
         return {
             "decision": decision,
             "feature_id": candidate.get("feature_id") if isinstance(candidate, dict) else None,
-            "evidence": list(blockers) + [reason],
+            "evidence": evidence,
+            "stage_evidence": stage_evidence,
             "proposed_change": candidate.get("intended_rtl_modification") if isinstance(candidate, dict) else None,
             "required_validation_stages": candidate.get("required_validation_stages", []) if isinstance(candidate, dict) else [],
             "required_validation_commands": candidate.get("validation_commands", {}) if isinstance(candidate, dict) else {},
-            "expected_impact": candidate.get("expected_ppa_improvement") if isinstance(candidate, dict) else None,
+            "expected_impact": (candidate.get("expected_metric_improvement",
+                                               candidate.get("expected_ppa_improvement"))
+                                if isinstance(candidate, dict) else None),
             "remaining_budget": remaining,
         }
 
@@ -233,7 +266,8 @@ def summarize_benchmarks(campaigns, budget, telemetry=None, human_interventions=
                      if item.get("status") == "PASS" and comparison.get("decision") == "ACCEPT")
     metric_deltas = {name: [comparison.get("metrics", {}).get(name, {}).get("delta")
                             for comparison in comparisons]
-                     for name in ("cell_area", "setup_wns", "int8_throughput")}
+                     for name in ("cell_area", "setup_wns", "int8_throughput",
+                                  "workload_cycles", "macs_per_cycle")}
     stages = [stage for evidence in evaluations for stage in evidence.get("stages", [])]
     checkpoints = [item.get("checkpoint", {}) for item in campaigns]
     checkpoint_stages = [stage for checkpoint in checkpoints for stage in checkpoint.get("stages", [])]
