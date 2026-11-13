@@ -1,0 +1,149 @@
+schema_version: 1
+project: NMAForge
+source_revision: c290eba7697138a4fcf2cbbac9262264849f0aeb
+rtl_sources: [rtl/dma/ai_axi128_dma.v]
+source_filelists:
+  - dv/block/dma/sim/dma_block_uvm.f
+  - dv/subsystem/dma_spad/sim/dma_spad_subsystem_uvm.f
+spec_sources:
+  - docs/spec/SPEC_ZH.md
+  - dv/block/dma/DMA_UVM_TESTPLAN.md
+features:
+  - id: DMA-F-001
+    name: DDR to SPAD load with tagged, out-of-order reads
+    spec_refs:
+      - {file: docs/spec/SPEC_ZH.md, contains: "最多四个 tagged read outstanding"}
+      - {file: dv/block/dma/DMA_UVM_TESTPLAN.md, contains: "newest-first R"}
+    testpoints:
+      - id: DMA-TP-001
+        stimulus: Accept four read bursts before returning responses, then return newest first.
+        tests: [dma_load_ooo_smoke_test]
+        checker: {id: DMA-CK-001, kind: reference_model, scope: DUT_business, description: Compare every SPAD word and check the observed completion order., source: dv/block/dma/env/dma_block_scoreboard.svh}
+        coverage:
+          - {group: dma_cmd_cg, point: cp_direction, bins: [load]}
+          - {group: dma_cmd_cg, point: cp_outstanding, bins: [four]}
+
+  - id: DMA-F-002
+    name: 2-D stride and indexed gather address generation
+    spec_refs:
+      - {file: docs/spec/SPEC_ZH.md, contains: "二维 row/stride、indexed gather"}
+      - {file: dv/block/dma/DMA_UVM_TESTPLAN.md, contains: "3×4, SPAD-held DDR row pointers"}
+    testpoints:
+      - id: DMA-TP-002
+        stimulus: Run strided load/store rows and gather non-contiguous rows through the SPAD index table.
+        tests: [dma_2d_load_test, dma_2d_store_test, dma_gather_load_test]
+        checker: {id: DMA-CK-002, kind: reference_model, scope: DUT_business, description: Compare generated row addresses and each transferred word against the memory model., source: dv/block/dma/env/dma_block_scoreboard.svh}
+        coverage:
+          - {group: dma_cmd_cg, point: cp_shape, bins: [two_d]}
+          - {group: dma_cmd_cg, point: cp_gather, bins: [enabled]}
+          - {group: dma_cmd_cg, point: x_transfer_modes, bins: [load_two_d_enabled]}
+
+  - id: DMA-F-003
+    name: Burst planning and 4 KiB boundary split
+    spec_refs:
+      - {file: docs/spec/SPEC_ZH.md, contains: "burst 最多 16 beats，且在每个 4 KiB AXI 边界拆分"}
+      - {file: dv/block/dma/DMA_UVM_TESTPLAN.md, contains: "accepted ARs are exactly `0x1ff0/LEN0` then `0x2000/LEN1`"}
+    testpoints:
+      - id: DMA-TP-003
+        stimulus: Exercise narrow transfers, a page crossing, a transfer starting one beat before the page edge, and 1/2/3-word tails.
+        tests: [dma_narrow_load_test, dma_4k_load_test, dma_4k_edge_load_test, dma_short_tail_store_test]
+        checker: {id: DMA-CK-003, kind: protocol_sva, scope: DUT_protocol, description: Assert accepted AR/AW bursts never cross 4 KiB; scoreboard checks split addresses, data, WLAST and WSTRB., source: dv/block/dma/assertions/ai_axi128_dma_sva.sv}
+        coverage:
+          - {group: dma_cmd_cg, point: cp_4k, bins: ["yes"]}
+          - {group: dma_cmd_cg, point: cp_length, bins: [short, multi]}
+
+  - id: DMA-F-004
+    name: Store response IDs, write stability, and completion drain
+    spec_refs:
+      - {file: docs/spec/SPEC_ZH.md, contains: "BID 归因写响应"}
+      - {file: dv/block/dma/DMA_UVM_TESTPLAN.md, contains: "IDs 8–11"}
+    testpoints:
+      - id: DMA-TP-004
+        stimulus: Hold four write responses, complete BID in reverse order, and stall AW while its payload is valid.
+        tests: [dma_store_booo_test, dma_store_four_booo_test, dma_aw_stall_stability_test]
+        checker: {id: DMA-CK-004, kind: reference_model, scope: DUT_business, description: Check AW/W/WLAST and all DDR words, exact BID ownership and drained response window., source: dv/block/dma/env/dma_block_scoreboard.svh}
+        coverage:
+          - {group: dma_cmd_cg, point: cp_direction, bins: [store]}
+          - {group: dma_cmd_cg, point: x_transfer_modes, bins: [store_linear_disabled]}
+
+  - id: DMA-F-005
+    name: Error, abort, reset, and no-reset recovery
+    spec_refs:
+      - {file: docs/spec/SPEC_ZH.md, contains: "abort=3"}
+      - {file: dv/block/dma/DMA_UVM_TESTPLAN.md, contains: "no-reset recovery"}
+    testpoints:
+      - id: DMA-TP-005
+        status: existing
+        stimulus: Inject read/write SLVERR, SPAD protection error, abort accepted transfers, and reject an unaligned command; follow with a clean transfer.
+        tests: [dma_abort_read_test, dma_read_slverr_test, dma_spad_error_drain_test, dma_write_slverr_test, dma_abort_write_test, dma_config_error_test]
+        checker: {id: DMA-CK-005, kind: reference_model, scope: DUT_business, description: Check error ABI, accepted-transaction drain, unchanged destination sentinels, and no-reset recovery data., source: dv/block/dma/env/dma_block_scoreboard.svh}
+        coverage:
+          - {group: dma_cmd_cg, point: cp_direction, bins: [load, store]}
+          - {group: dma_error_scenario_cg, point: error_kind, bins: [abort, axi_read_error, spad_error, axi_write_error, config_error]}
+      - id: DMA-TP-007
+        status: existing
+        stimulus: Reset while four DMA read addresses are accepted and before any R response, then repeat after the first R beat and run a post-reset recovery transfer.
+        tests: [dma_spad_subsystem_test]
+        checker: {id: DMA-CK-007, kind: reference_model, scope: system_business, description: Check responder and DMA queues drain on coordinated reset, no stale DMA/SPAD activity returns, and clean post-reset data matches., source: dv/subsystem/dma_spad/tests/dma_spad_subsystem_test.svh}
+        coverage:
+          - {group: dma_reset_phase_cg, point: cp_phase, bins: [all_four_ar_before_any_r, first_r_beat_accepted_next_stalled]}
+
+  - id: DMA-F-006
+    name: Backpressure and constrained-random transfers
+    spec_refs:
+      - {file: dv/block/dma/DMA_UVM_TESTPLAN.md, contains: "deterministic stalls + OOO R"}
+      - {file: dv/block/dma/DMA_UVM_TESTPLAN.md, contains: "replay through `SEED`"}
+    testpoints:
+      - id: DMA-TP-006
+        stimulus: Independently stall AR/AW/W/SPAD channels, reorder responses, then run legal randomized load/store commands with recorded seeds.
+        tests: [dma_backpressure_test, dma_random_stress_test]
+        checker: {id: DMA-CK-006, kind: reference_model, scope: DUT_business, description: Detect deadlock, score every command and compare all transferred words., source: dv/block/dma/env/dma_block_scoreboard.svh}
+        coverage:
+          - {group: dma_cmd_cg, point: cp_direction, bins: [load, store]}
+          - {group: dma_cmd_cg, point: cp_outstanding, bins: [many, four]}
+
+closure:
+  regression_commands:
+    - name: dma_block
+      cwd: dv/block/dma/sim
+      argv: [make, uvm_regress, "SIMV={run_dir_rel}/simv_dma_block", "COV_ROOT={run_dir}/vdb"]
+      expected_tests:
+        - dma_load_ooo_smoke_test
+        - dma_2d_load_test
+        - dma_gather_load_test
+        - dma_store_booo_test
+        - dma_store_four_booo_test
+        - dma_2d_store_test
+        - dma_aw_stall_stability_test
+        - dma_narrow_load_test
+        - dma_4k_load_test
+        - dma_4k_edge_load_test
+        - dma_short_tail_store_test
+        - dma_abort_read_test
+        - dma_read_slverr_test
+        - dma_spad_error_drain_test
+        - dma_write_slverr_test
+        - dma_abort_write_test
+        - dma_config_error_test
+        - dma_backpressure_test
+        - dma_random_stress_test
+    - name: dma_subsystem_reset
+      cwd: dv/subsystem/dma_spad/sim
+      argv: [make, subsystem_run, "SEED={seed}", "SIMV={run_dir_rel}/simv_dma_spad", "COV_DIR={run_dir_rel}/dma_spad.vdb", "RUN_LOG={run_dir_rel}/subsystem.log", "COMPILE_LOG={run_dir_rel}/compile.log"]
+      expected_tests: [dma_spad_subsystem_test]
+      pass_patterns: ["UVM Report Summary", "UVM_ERROR\\s*:\\s*0", "UVM_FATAL\\s*:\\s*0"]
+  coverage_commands:
+    - name: dma_block_urg
+      cwd: dv/block/dma/sim
+      argv: [urg, -full64, -dir, "{seed_dir_rel}/dma_block/vdb/*.vdb", -report, "{run_dir_rel}/report"]
+    - name: dma_subsystem_urg
+      cwd: dv/subsystem/dma_spad/sim
+      argv: [urg, -full64, -dir, "{seed_dir_rel}/dma_subsystem_reset/dma_spad.vdb", -report, "{run_dir_rel}/report"]
+  seeds: [20261107, 20261108, 20261109]
+  pass_patterns: ["UVM Report Summary", "UVM_ERROR\\s*:\\s*0", "UVM_FATAL\\s*:\\s*0"]
+  fail_patterns: ["UVM_ERROR\\s*:\\s*[1-9]", "UVM_FATAL\\s*:\\s*[1-9]", "TEST FAILED", "Failed to obtain license"]
+  budgets: {max_campaigns: 3, max_seeds: 20, max_new_tests: 3, max_runtime_sec: 7200, per_seed_timeout_sec: 1800}
+
+# The existing DMA UVM environment already has the sequencer, VIP-like AXI
+# responder, passive monitors, scoreboard, SVA, coverage and nineteen tests.
+# Add `scaffold` only when analysis identifies a new testpoint as missing.
