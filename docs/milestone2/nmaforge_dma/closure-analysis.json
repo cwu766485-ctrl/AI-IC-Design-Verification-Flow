@@ -137,7 +137,7 @@
   "run_failures": [],
   "status": "OPEN",
   "urg_reports": [
-    "/tmp/nmaforge-m2-coverage-closure/runs/verification-closure/m2-runtime-final-20261113/seed-20261107/dma_block_urg/report",
-    "/tmp/nmaforge-m2-coverage-closure/runs/verification-closure/m2-runtime-final-20261113/seed-20261107/dma_subsystem_urg/report"
+    "runs/verification-closure/m2-runtime-final-20261113/seed-20261107/dma_block_urg/report",
+    "runs/verification-closure/m2-runtime-final-20261113/seed-20261107/dma_subsystem_urg/report"
   ]
 }
