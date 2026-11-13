@@ -112,6 +112,27 @@ This suggests further profiling should focus on prefetch/arbiter interaction
 and writeback acceptance, then isolate compute, prefetch, and writeback stalls
 with non-overlapping cycle attribution before proposing another RTL change.
 
+## Campaign Instrumentation
+
+| Measure | Observed result |
+| --- | --- |
+| Isolated RTL candidates evaluated | 2: Candidate 001 and Candidate 002 |
+| Required-gate pass rate | 1/2 (50%); Candidate 001 failed regression, Candidate 002 passed all configured stages |
+| 5% objective success rate | 0/2; Candidate 002's aggregate reduction was 0.44% |
+| Functional regression evidence | Candidate 001: one phase-abort regression failure; Candidate 002: 3 seeds, 18 cases and 35 fault checks per seed passed |
+| Recorded Stage Runtime | 21.691 s total: 5.448 s for Candidate 001 and 16.243 s for Candidate 002 |
+| VCS compile invocations | 5: one for Candidate 001 and four for Candidate 002's regression, reference, latency and performance stages |
+| VCS simulation runs | 9: one Candidate 001 run; Candidate 002 regression/reference each ran three seeds, plus one latency and one performance run |
+| Stage cache hits | 0 |
+| Cell-area and WNS changes | Not measured; ASIC synthesis and STA were blocked |
+| Agent calls, token usage, human intervention count | Not captured by the campaign |
+
+The measured invocation counts are taken from each retained command log
+(`vcs -licwait` compile lines and VCS runtime banners). They describe these two
+campaigns only and do not support a workflow-efficiency comparison. The
+controller comparator marked Candidate 002 `ACCEPT` based on direction of the
+two simulation metrics; the separate 5% campaign objective was not met.
+
 ## Decision
 
 - Candidate 001: `REJECT` remains in force; its required regression fails.
