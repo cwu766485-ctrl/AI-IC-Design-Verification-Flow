@@ -1,86 +1,86 @@
 ---
 name: eda-tool-engineering
-description: Reproducible project-level Synopsys VCS/URG simulation and coverage, Design Compiler synthesis, and PrimeTime STA flows. Use when a project contains eda.yaml or when Codex must inspect, plan, generate, or run these flows.
+description: Reproducible project-level Synopsys VCS/URG simulation, regression, coverage, Design Compiler synthesis, and PrimeTime STA. Use when a project contains eda.yaml or when Codex must inspect, plan, or run these flows.
 ---
 
 # Synopsys EDA engineering
 
-This skill reads project facts from `<project-root>/eda.yaml`, constructs
-deterministic commands, and writes logs and machine-readable results below
-`runs/`. It does not claim design or verification signoff.
+Use the project's `<project-root>/eda.yaml` as the source of project facts.
+This skill adds validated adapters to the existing flow; it does not replace
+the repository's three-Skill structure or claim design/verification signoff.
+Paths resolve from the project root, while absolute installed library paths
+are allowed when explicitly configured. RTL and nested filelist order is kept.
 
-## Project contract
+## Configuration and environment
 
-Use the project-root `eda.yaml`. The field contract and examples are in
-[references/project-eda-contract.md](references/project-eda-contract.md).
-Paths resolve relative to the project root, except absolute paths for installed
-libraries or project assets explicitly configured by the user. Preserve RTL
-source and filelist order.
+The field contract is documented in
+[project-eda-contract.md](references/project-eda-contract.md), and a fuller
+sample is in [examples/eda.yaml](examples/eda.yaml). It covers design top,
+testbench top/sources, ordered filelists, globs, includes, defines, PDK/library
+inputs, SDC, regression seeds, coverage, debug, synthesis activity, and local
+or explicitly authorized SSH execution.
 
-Core fields are `name`, `top`, `rtl`, `filelists`, `include_dirs`, and `defines`.
-The executable flows additionally use:
+Run the read-only capability probe first:
 
-- VCS simulation: `flows.sim.tb`, optional `flows.sim.top`, `seed`, `test_name`,
-  `plusargs`, and `coverage`.
-- Standalone URG: `flows.coverage.vdb` as one nonempty VDB directory or a list
-  of VDB directories.
-- DC synthesis: `pdk.root`, `pdk.target_library`, optional
-  `pdk.link_libraries`, and `constraints` or `flows.synth.sdc`.
-- PrimeTime STA: the same library/constraint fields and an explicit existing
-  `flows.sta.netlist`.
+```bash
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/eda-tool-engineering/scripts/check_environment.py" \
+  --project-root "$PWD" --output runs/environment.json
+```
+
+It reports tool installation, version probe, license evidence, project
+configuration/assets, and smoke-test evidence as separate fields. Presence in
+`PATH` or license-server environment variables alone does not establish a
+license checkout. `--probe-licenses` checks only feature names explicitly
+listed in `eda.yaml`; it never prints license server values. To test an
+authorized remote host, pass its SSH config alias with `--ssh-host`.
 
 ## Commands
 
-Run from the project root:
+Run from the project root. `eda.py` is the canonical CLI; root `aicflow` is a
+compatibility wrapper into the same CLI.
 
 ```bash
-python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" doctor
-python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" plan --flow sim
-python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" run --flow sim --dry-run
-python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" run --flow sim --execute
-python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" run --flow synth --execute
-python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" run --flow sta --execute
+EDA_SCRIPT="${CODEX_HOME:-$HOME/.codex}/skills/eda-tool-engineering/scripts/eda.py"
+python3 "$EDA_SCRIPT" doctor
+python3 "$EDA_SCRIPT" plan --flow regression
+python3 "$EDA_SCRIPT" run --flow regression --dry-run
+python3 "$EDA_SCRIPT" run --flow regression --execute
+python3 "$EDA_SCRIPT" run --flow synth --execute
+python3 "$EDA_SCRIPT" run --flow sta --execute
+python3 "$EDA_SCRIPT" resume --run-id <run-id> --execute
+python3 "$EDA_SCRIPT" report --run-id <run-id>
 ```
 
-`plan` and dry runs produce `NOT_RUN`, never PASS. Only `run --execute` launches
-a tool. Every execution writes `runs/<run-id>/manifest.json`, command scripts,
-logs, source and configuration hashes, stage statuses, tool versions, and
-artifact records. VCS compile, simulation, result checking, and optional URG
-extraction are independent stages with explicit dependencies.
+Dry run and planning only generate commands and return `NOT_RUN`; execution
+requires `--execute`. A run writes to a unique `runs/<run-id>/` with Tcl,
+filelists, logs, run manifest, unified metrics JSON, and hashes/inventories of
+inputs and artifacts. Failed dependencies block downstream stages. Resume
+reuses a passing stage only when its recorded outputs still match their hashes.
 
-The root `aicflow` command plans and checkpoints the current simulation and
-synthesis pipelines. It delegates each executed stage to `eda.py`. The
-proposed shared contract for the separate PPA campaign interface is documented
-in [the unified execution contract](../../docs/architecture/unified-execution-contract.md).
+## Implemented adapters and boundaries
 
-## Capability boundary
-
-| Flow | Current implementation |
+| Adapter | Implemented behavior |
 |---|---|
-| `sim` | Executable VCS compile → simulation → result checks. Testbench top is selected independently from design top. Simulation must have an explicit pass marker or a zero-error/zero-fatal UVM summary. |
-| `coverage` | Executable URG report extraction from configured existing VDB input. Missing/empty database or missing dashboard blocks the run. |
-| `sim` with coverage | Enables compile-time and runtime VCS coverage instrumentation, then extracts the run VDB with URG. |
-| `synth` | Executable DC SystemVerilog analysis/elaboration, link, SDC application, mapping, netlist and report generation. Missing artifacts or required area/WNS/TNS block PASS. |
-| `sta` | Executable PrimeTime analysis of the explicitly configured gate-level netlist, libraries, and SDC. Required reports and parseable WNS/TNS are checked. |
-| `formality` | Planning only. A generated script requires separately configured Golden and Revised source lists and refuses identical lists. |
-| `cdc` | Planning only. A SpyGlass lint script is not treated as CDC validation. |
-| Other legacy flows | Their planning interfaces and script generation remain available. Execution is `BLOCKED` until an adapter and evidence contract are validated. MBIST/LBIST/APR/Power/StarRC include templates. |
+| `sim` | VCS compile and simulation are separate dependent stages. The configured testbench top is used for simulation. A test passes only with `TEST PASSED` or a UVM summary with zero errors and fatals. |
+| `regression` | VCS compile once; run each configured test/seed in a separate stage and coverage database; classify every result; merge coverage with URG. |
+| `coverage` | URG reads configured existing VDB directories. Required dashboard and parseable module-definition code coverage are enforced. Functional summaries are reported separately and required when requested. |
+| `debug` option | VCS KDB/debug access is enabled at compile. KDB/wave artifacts and a Verdi launch script are inventoried. The Verdi GUI itself is not run by this adapter. |
+| `synth` | DC analyzes/elaborates the design top, links configured libraries, reads SDC, maps, and emits netlist, check, QoR, area, timing, constraint, and power reports. Missing required report/QoR metrics blocks the run. Optional SAIF activity is tracked. |
+| `sta` | PrimeTime analyzes the explicitly named netlist against configured libraries and SDC, with QoR/timing/constraint reports and required parseable WNS/TNS. |
 
-See [the complete adapter matrix](../../docs/eda-adapter-capabilities.md).
+Formality remains planning-only and refuses identical Golden/Revised sources.
+SpyGlass lint is not represented as CDC. VC Formal, Formality execution, APR,
+power signoff, StarRC, TestMAX insertion/ATPG, and other legacy flows are
+unsupported or planning/templates until separately validated adapters exist.
+See [flow capabilities](../../docs/eda-adapter-capabilities.md) and the
+[host tool matrix](../../docs/tool-capability-matrix.md).
 
-`doctor` checks tool availability and config shape; it does not prove that a
-license can be checked out. License, unsupported tool, missing input, failed
-command, timeout, and missing required evidence are represented as
-`BLOCKED`, `FAIL`, or `ERROR`, never silently mapped to PASS.
+`PASS` means the configured stage completed and its implemented required
+evidence checks passed; it is not a design or signoff claim. Default DC power
+activity is an estimate. Missing or unitless total power remains `null` and is
+marked partial in the metrics JSON. The local smoke used a generic installed
+example library, not a product PDK.
 
-## Evidence and limits
-
-`PASS` means only that the configured stage and its required artifacts passed
-the implemented checks. It is not a signoff claim. The local smoke records in
-[`docs/milestone1.md`](../../docs/milestone1.md) used an owned temporary RTL
-fixture and an installed Synopsys example library for DC/STA; they do not
-validate a target PDK or production design.
-
-Do not modify installed Synopsys tools, licenses, PDKs, libraries, source RTL,
-or existing verification evidence. Keep generated runs under `runs/` and
-review scripts and reports before relying on results.
+Do not modify Synopsys installations, licenses, PDKs, libraries, external RTL,
+or existing evidence. Review generated scripts and reports before relying on
+results.

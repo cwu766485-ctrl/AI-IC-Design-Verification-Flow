@@ -77,7 +77,8 @@ area/timing reports, and exact inputs. Reject unresolved references and missing
 or empty reports.
 
 **Acceptance:** Fake DC executable tests cover argv, source/library/SDC
-provenance, exit propagation and missing reports. Local Synopsys smoke remains
+provenance, exit propagation and missing reports. Local Synopsys smoke passed
+with the installed example library; project PDK/library validation remains
 pending. Depends on M1-01.
 
 ## M1-05 — Shared report parser registry

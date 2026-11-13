@@ -10,15 +10,17 @@ import sys
 from pathlib import Path
 
 from eda_config import ConfigError, load, sources, resolve
-from eda_runtime import artifact_record, git_state, save, sha256
+from eda_runtime import artifact_record, git_state, save, sha256, tool_version
 
 
-FLOWS = {"rtl_to_sim": ["sim"], "rtl_to_synth": ["synth"], "rtl_to_sim_synth": ["sim", "synth"]}
+FLOWS = {"rtl_to_sim": ["sim"], "rtl_to_regression": ["regression"],
+         "rtl_to_synth": ["synth"], "rtl_to_sim_synth": ["sim", "synth"]}
 EDA = Path(__file__).with_name("eda.py")
 
 
 def tool_signature(stage):
-    name, home = {"sim": ("vcs", "VCS_HOME"), "coverage": ("urg", "VCS_HOME"),
+    name, home = {"sim": ("vcs", "VCS_HOME"), "regression": ("vcs", "VCS_HOME"),
+                  "coverage": ("urg", "VCS_HOME"),
                   "synth": ("dc_shell", "DC_HOME"), "sta": ("pt_shell", "PRIME_HOME")}.get(
                       stage, ("", ""))
     if not name:
@@ -29,7 +31,7 @@ def tool_signature(stage):
         return None
     path = Path(path)
     stat = path.stat()
-    return [str(path), stat.st_size, stat.st_mtime]
+    return [str(path), stat.st_size, stat.st_mtime, tool_version(str(path))]
 
 
 def fingerprint(root, cfg):
@@ -51,6 +53,7 @@ def fingerprint(root, cfg):
     unique_paths = list(dict.fromkeys(p.resolve() for p in paths))
     data = {str(p): sha256(p) for p in unique_paths if p.is_file()}
     data["ordered_sources"] = inputs["rtl"]
+    data["source_revision"] = git_state(root)
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
 
@@ -150,15 +153,15 @@ def _manifest_intact(path):
     return True
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(prog="aicflow")
     commands = ap.add_subparsers(dest="command")
     commands.add_parser("doctor")
-    plan = commands.add_parser("plan"); plan.add_argument("--flow", choices=FLOWS, required=True)
-    run = commands.add_parser("run"); run.add_argument("--flow", choices=FLOWS, required=True); run.add_argument("--execute", action="store_true")
+    plan = commands.add_parser("plan"); plan.add_argument("--flow", choices=FLOWS, required=True); plan.add_argument("--run-id")
+    run = commands.add_parser("run"); run.add_argument("--flow", choices=FLOWS, required=True); run.add_argument("--run-id"); run.add_argument("--execute", action="store_true")
     resume = commands.add_parser("resume"); resume.add_argument("--run-id", required=True); resume.add_argument("--execute", action="store_true")
     report = commands.add_parser("report"); report.add_argument("--run-id", required=True)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if not args.command:
         ap.error("a command is required")
     root = Path.cwd()
@@ -179,7 +182,9 @@ def main():
         return 0 if args.command == "report" or data["status"] in ("PASS", "NOT_RUN") else 1
     try:
         cfg = load(root / "eda.yaml")
-        run_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f") + "-" + args.flow
+        run_id = args.run_id or dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f") + "-" + args.flow
+        if not __import__("re").fullmatch(r"[A-Za-z0-9_.-]+", run_id):
+            ap.error("invalid run id")
         data = workflow(root, args.flow, run_id, cfg)
     except (OSError, ConfigError) as exc:
         print(json.dumps({"status": "BLOCKED", "error": str(exc)}))

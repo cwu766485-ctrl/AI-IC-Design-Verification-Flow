@@ -38,8 +38,8 @@ exit-code gates. URG generated separate block and subsystem reports with VCS /
 URG `V-2023.12-SP1`; source hashes include every file in both simulator
 filelists. The raw campaign manifest is included in
 [`campaign-evidence.json`](nmaforge_dma/campaign-evidence.json); the complete
-per-command logs, VCS binaries, VDBs, and URG HTML artifacts remain under
-`/tmp/nmaforge_m2_dma_campaign_verified/runs/m2_seed_20261107/`. Its plan hash
+per-command logs, VCS binaries, VDBs, and URG HTML artifacts remain under a
+local temporary run directory that is not checked into this repository. Its plan hash
 matches the generated plan.
 
 The URG parser measured 13 of the plan's 18 unique bins, and all 13 were hit.

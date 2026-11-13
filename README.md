@@ -1,6 +1,6 @@
 # AI IC Design Verification Flow
 
-Three complementary Codex skills for building AI-native chip design and verification repositories, writing concise repository instructions, and running reproducible Synopsys EDA workflows.
+Five Codex skills cover AI-native chip repositories, reproducible Synopsys EDA, verification closure, repository instructions, and RTL/PPA optimization.
 
 ## Skills
 
@@ -16,7 +16,7 @@ Use $organize-chip-project to inspect and safely organize this chip design and v
 
 ### `eda-tool-engineering`
 
-Provide a project-independent command interface for reproducible Synopsys RTL simulation, debug, lint/CDC, formal, synthesis, DFT/ATPG, APR, STA, power, and parasitic-extraction flows. Project facts remain in the project's `eda.yaml`; generated commands, logs, and results stay under `runs/`. VCS simulation and DC synthesis have executable, evidence-checked adapters; other flows retain their existing planning interfaces.
+Provide a project-independent command interface over a project's `eda.yaml`. Executable adapters cover VCS compile/simulation/regression, URG code and functional coverage extraction, Design Compiler synthesis, and PrimeTime STA. Verdi debug database artifacts are inventoried; the Verdi GUI is not launched. Other listed EDA flows remain planning-only or unsupported until their execution and evidence checks are validated. Generated commands, logs, run manifests, and metrics stay under `runs/`.
 
 Example:
 
@@ -24,13 +24,10 @@ Example:
 Use $eda-tool-engineering to inspect this project's eda.yaml, validate the environment, and create a dry-run simulation plan.
 ```
 
-### `verification-closure`
-
-Build a traceable Spec → Testpoint → Checker → Coverage plan, extend existing UVM environments with reviewable test scaffolds, and run budgeted regression/coverage campaigns. It keeps protocol VIP evidence separate from DUT business checking and records unhit bins as gaps.
-
-```text
-Use $verification-closure to map this DMA specification into a UVM test plan, run one bounded regression campaign, and classify coverage gaps.
-```
+See the [EDA adapter capability matrix](docs/eda-adapter-capabilities.md) for
+required inputs and passing evidence, and the [M0 tool capability matrix](docs/tool-capability-matrix.md)
+for host installation/license/configuration/test status. Dry-run and planning
+results are `NOT_RUN`; they are not verification results.
 
 ### `write-agents-md`
 
@@ -42,23 +39,15 @@ Example:
 Use $write-agents-md to inspect this repository and create an actionable AGENTS.md under 150 lines.
 ```
 
+### `rtl-ppa-optimization`
+
+The existing PPA campaign skill provides a separate baseline/candidate workflow. Its target-project PPA and optimization acceptance remain unverified until a project-specific baseline, constraints, and Synopsys evidence are available; this M0/M1 increment does not extend that skill.
+
+### `verification-closure`
+
+Build a traceable Spec → Testpoint → Checker → Coverage plan, add reviewable UVM test scaffolds, and run budgeted regression/coverage campaigns. The included NMAForge DMA campaign passed its configured block and subsystem tests, while closure analysis remains open for five unimplemented error-coverage bins and missing checker counters. See [Milestone 2](docs/milestone2/README.md) and the [generated DMA plan](docs/milestone2/nmaforge_dma/verification-plan.md).
+
 The two skills work together: `organize-chip-project` establishes the repository's knowledge and execution surfaces, while `eda-tool-engineering` supplies the reproducible EDA execution layer. When an organized project contains `eda.yaml`, the organizer directs the agent to use the EDA skill rather than creating a competing flow.
-
-`verification-closure` is the separate planning and analysis layer. It reuses the project's verification agents and canonical Makefiles, and calls deterministic tool flows only when a plan explicitly configures them.
-
-## Milestone 1 flow engine
-
-From a project with a valid `eda.yaml`, use the root `aicflow` entry point:
-
-```bash
-/path/to/this/repo/aicflow doctor
-/path/to/this/repo/aicflow plan --flow rtl_to_sim_synth
-/path/to/this/repo/aicflow run --flow rtl_to_sim_synth --execute
-/path/to/this/repo/aicflow resume --run-id <run-id> --execute
-/path/to/this/repo/aicflow report --run-id <run-id>
-```
-
-Available pipelines: `rtl_to_sim`, `rtl_to_synth`, `rtl_to_sim_synth`. `plan` never launches EDA tools. `run` also stays in planning mode unless `--execute` is given. A run writes a checkpoint under `runs/<run-id>/` and one manifest per adapter stage. Failed dependencies block later stages. `resume` retries a failed stage and checks the input fingerprint; a changed input requires a new run. A prior passing stage with the same fingerprint can be reused from cache. See [Milestone 1 evidence](docs/milestone1.md) and the [project contract](skills/eda-tool-engineering/references/project-eda-contract.md).
 
 ## Install
 
@@ -67,8 +56,9 @@ Copy or symlink the skill directories into `${CODEX_HOME:-$HOME/.codex}/skills/`
 ```text
 skills/eda-tool-engineering
 skills/organize-chip-project
-skills/verification-closure
 skills/write-agents-md
+skills/rtl-ppa-optimization
+skills/verification-closure
 ```
 
 Restart or reload Codex skill discovery if the new skills are not visible immediately.
