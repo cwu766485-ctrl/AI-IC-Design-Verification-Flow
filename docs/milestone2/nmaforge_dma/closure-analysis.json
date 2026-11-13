@@ -1,0 +1,154 @@
+{
+  "coverage_bins": {
+    "dma_cmd_cg.cp_4k.yes": {
+      "count": 2,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_direction.load": {
+      "count": 41,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_direction.store": {
+      "count": 22,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_gather.enabled": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_length.multi": {
+      "count": 41,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_length.short": {
+      "count": 7,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_outstanding.four": {
+      "count": 40,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_outstanding.many": {
+      "count": 21,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_shape.two_d": {
+      "count": 3,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.x_transfer_modes.load_two_d_enabled": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.x_transfer_modes.store_linear_disabled": {
+      "count": 21,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_reset_phase_cg.cp_phase.all_four_ar_before_any_r": {
+      "count": 3,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_reset_phase_cg.cp_phase.first_r_beat_accepted_next_stalled": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    }
+  },
+  "findings": [
+    {
+      "classification": "unmeasured",
+      "detail": "checker attempt evidence missing",
+      "feature_id": "DMA-F-001",
+      "testpoint_id": "DMA-TP-001"
+    },
+    {
+      "classification": "unmeasured",
+      "detail": "checker attempt evidence missing",
+      "feature_id": "DMA-F-002",
+      "testpoint_id": "DMA-TP-002"
+    },
+    {
+      "classification": "unmeasured",
+      "detail": "checker attempt evidence missing",
+      "feature_id": "DMA-F-003",
+      "testpoint_id": "DMA-TP-003"
+    },
+    {
+      "classification": "unmeasured",
+      "detail": "checker attempt evidence missing",
+      "feature_id": "DMA-F-004",
+      "testpoint_id": "DMA-TP-004"
+    },
+    {
+      "classification": "unmeasured",
+      "detail": "checker attempt evidence missing",
+      "feature_id": "DMA-F-005",
+      "testpoint_id": "DMA-TP-005"
+    },
+    {
+      "classification": "missing_checker",
+      "detail": "coverage model group missing: dma_error_scenario_cg",
+      "feature_id": "DMA-F-005",
+      "testpoint_id": "DMA-TP-005"
+    },
+    {
+      "classification": "missing_checker",
+      "detail": "coverage model group missing: dma_error_scenario_cg",
+      "feature_id": "DMA-F-005",
+      "testpoint_id": "DMA-TP-005"
+    },
+    {
+      "classification": "missing_checker",
+      "detail": "coverage model group missing: dma_error_scenario_cg",
+      "feature_id": "DMA-F-005",
+      "testpoint_id": "DMA-TP-005"
+    },
+    {
+      "classification": "missing_checker",
+      "detail": "coverage model group missing: dma_error_scenario_cg",
+      "feature_id": "DMA-F-005",
+      "testpoint_id": "DMA-TP-005"
+    },
+    {
+      "classification": "missing_checker",
+      "detail": "coverage model group missing: dma_error_scenario_cg",
+      "feature_id": "DMA-F-005",
+      "testpoint_id": "DMA-TP-005"
+    },
+    {
+      "classification": "unmeasured",
+      "detail": "checker attempt evidence missing",
+      "feature_id": "DMA-F-005",
+      "testpoint_id": "DMA-TP-007"
+    },
+    {
+      "classification": "unmeasured",
+      "detail": "checker attempt evidence missing",
+      "feature_id": "DMA-F-006",
+      "testpoint_id": "DMA-TP-006"
+    }
+  ],
+  "global_fail_patterns": [],
+  "missing_pass_patterns": [],
+  "plan_hash_match": true,
+  "plan_sha256": "4908b295efe03507f0195f15fd64b3eb088e9a5bf8e96c2981af1930349e73a2",
+  "run_count": 4,
+  "run_failures": [],
+  "status": "OPEN",
+  "urg_reports": [
+    "<NMAForge-snapshot>/runs/m2_seed_20261107/seed-20261107/dma_block_urg/report",
+    "<NMAForge-snapshot>/runs/m2_seed_20261107/seed-20261107/dma_subsystem_urg/report"
+  ]
+}

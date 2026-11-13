@@ -1,0 +1,3 @@
+interface:
+  display_name: "Verification Closure"
+  short_description: "Plan regressions and review coverage closure"

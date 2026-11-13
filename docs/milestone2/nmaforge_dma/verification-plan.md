@@ -1,0 +1,24 @@
+# Verification Plan: NMAForge
+
+Source revision: `c290eba7697138a4fcf2cbbac9262264849f0aeb`
+
+Plan SHA256: `4908b295efe03507f0195f15fd64b3eb088e9a5bf8e96c2981af1930349e73a2`
+
+| Feature | Spec reference | Testpoint | Stimulus | Test(s) | Checker | Coverage goals |
+|---|---|---|---|---|---|---|
+| DMA-F-001 DDR to SPAD load with tagged, out-of-order reads | docs/spec/SPEC_ZH.md — “最多四个 tagged read outstanding”; dv/block/dma/DMA_UVM_TESTPLAN.md — “newest-first R” | DMA-TP-001 (existing) | Accept four read bursts before returning responses, then return newest first. | dma_load_ooo_smoke_test | DMA-CK-001 reference_model/DUT_business: Compare every SPAD word and check the observed completion order. | dma_cmd_cg.cp_direction: load; dma_cmd_cg.cp_outstanding: four |
+| DMA-F-002 2-D stride and indexed gather address generation | docs/spec/SPEC_ZH.md — “二维 row/stride、indexed gather”; dv/block/dma/DMA_UVM_TESTPLAN.md — “3×4, SPAD-held DDR row pointers” | DMA-TP-002 (existing) | Run strided load/store rows and gather non-contiguous rows through the SPAD index table. | dma_2d_load_test, dma_2d_store_test, dma_gather_load_test | DMA-CK-002 reference_model/DUT_business: Compare generated row addresses and each transferred word against the memory model. | dma_cmd_cg.cp_shape: two_d; dma_cmd_cg.cp_gather: enabled; dma_cmd_cg.x_transfer_modes: load_two_d_enabled |
+| DMA-F-003 Burst planning and 4 KiB boundary split | docs/spec/SPEC_ZH.md — “burst 最多 16 beats，且在每个 4 KiB AXI 边界拆分”; dv/block/dma/DMA_UVM_TESTPLAN.md — “accepted ARs are exactly `0x1ff0/LEN0` then `0x2000/LEN1`” | DMA-TP-003 (existing) | Exercise narrow transfers, a page crossing, a transfer starting one beat before the page edge, and 1/2/3-word tails. | dma_narrow_load_test, dma_4k_load_test, dma_4k_edge_load_test, dma_short_tail_store_test | DMA-CK-003 protocol_sva/DUT_protocol: Assert accepted AR/AW bursts never cross 4 KiB; scoreboard checks split addresses | dma_cmd_cg.cp_4k: yes; dma_cmd_cg.cp_length: short, multi |
+| DMA-F-004 Store response IDs, write stability, and completion drain | docs/spec/SPEC_ZH.md — “BID 归因写响应”; dv/block/dma/DMA_UVM_TESTPLAN.md — “IDs 8–11” | DMA-TP-004 (existing) | Hold four write responses, complete BID in reverse order, and stall AW while its payload is valid. | dma_store_booo_test, dma_store_four_booo_test, dma_aw_stall_stability_test | DMA-CK-004 reference_model/DUT_business: Check AW/W/WLAST and all DDR words | dma_cmd_cg.cp_direction: store; dma_cmd_cg.x_transfer_modes: store_linear_disabled |
+| DMA-F-005 Error, abort, reset, and no-reset recovery | docs/spec/SPEC_ZH.md — “abort=3”; dv/block/dma/DMA_UVM_TESTPLAN.md — “no-reset recovery” | DMA-TP-005 (existing) | Inject read/write SLVERR, SPAD protection error, abort accepted transfers, and reject an unaligned command; follow with a clean transfer. | dma_abort_read_test, dma_read_slverr_test, dma_spad_error_drain_test, dma_write_slverr_test, dma_abort_write_test, dma_config_error_test | DMA-CK-005 reference_model/DUT_business: Check error ABI | dma_cmd_cg.cp_direction: load, store; dma_error_scenario_cg.error_kind: abort, axi_read_error, spad_error, axi_write_error, config_error |
+| DMA-F-005 Error, abort, reset, and no-reset recovery | docs/spec/SPEC_ZH.md — “abort=3”; dv/block/dma/DMA_UVM_TESTPLAN.md — “no-reset recovery” | DMA-TP-007 (existing) | Reset while four DMA read addresses are accepted and before any R response, then repeat after the first R beat and run a post-reset recovery transfer. | dma_spad_subsystem_test | DMA-CK-007 reference_model/system_business: Check responder and DMA queues drain on coordinated reset | dma_reset_phase_cg.cp_phase: all_four_ar_before_any_r, first_r_beat_accepted_next_stalled |
+| DMA-F-006 Backpressure and constrained-random transfers | dv/block/dma/DMA_UVM_TESTPLAN.md — “deterministic stalls + OOO R”; dv/block/dma/DMA_UVM_TESTPLAN.md — “replay through `SEED`” | DMA-TP-006 (existing) | Independently stall AR/AW/W/SPAD channels, reorder responses, then run legal randomized load/store commands with recorded seeds. | dma_backpressure_test, dma_random_stress_test | DMA-CK-006 reference_model/DUT_business: Detect deadlock | dma_cmd_cg.cp_direction: load, store; dma_cmd_cg.cp_outstanding: many, four |
+
+## Closure budget
+
+- dma_block: `make uvm_regress SIMV={run_dir_rel}/simv_dma_block COV_ROOT={run_dir}/vdb`
+- dma_subsystem_reset: `make subsystem_run SEED={seed} SIMV={run_dir_rel}/simv_dma_spad COV_DIR={run_dir_rel}/dma_spad.vdb RUN_LOG={run_dir_rel}/subsystem.log COMPILE_LOG={run_dir_rel}/compile.log`
+Seeds: `20261107, 20261108, 20261109`
+Budgets: `{"max_campaigns": 3, "max_new_tests": 3, "max_runtime_sec": 7200, "max_seeds": 20, "per_seed_timeout_sec": 1800}`
+
+A planned or unmeasured goal is not closed. Protocol VIP checks and DUT business checkers remain separate.

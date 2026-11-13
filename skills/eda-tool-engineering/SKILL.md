@@ -1,55 +1,86 @@
 ---
 name: eda-tool-engineering
-description: Reproducible Synopsys EDA flows for RTL simulation, debug, lint/CDC, formal, synthesis, DFT/ATPG (including MBIST/LBIST planning), APR, STA, power, and parasitic extraction. Use when a project contains eda.yaml or when Codex must inspect, plan, generate, or run one of these flows.
+description: Reproducible project-level Synopsys VCS/URG simulation and coverage, Design Compiler synthesis, and PrimeTime STA flows. Use when a project contains eda.yaml or when Codex must inspect, plan, generate, or run these flows.
 ---
 
 # Synopsys EDA engineering
 
-This skill is a thin, project-independent API over the installed Synopsys tools. Project facts live in `eda.yaml` at the project root; this skill supplies validation, environment discovery, command construction, logs, and normalized results.
-
-The primary quality target is VCS, Verdi, SpyGlass, Design Compiler, VC Formal, and Formality. Their adapters must produce reviewable commands/scripts and machine-readable reports before adding more products.
+This skill reads project facts from `<project-root>/eda.yaml`, constructs
+deterministic commands, and writes logs and machine-readable results below
+`runs/`. It does not claim design or verification signoff.
 
 ## Project contract
 
-Look for `<project-root>/eda.yaml` first. Do not put project-specific paths in this skill. The contract and an example are in [references/project-eda-contract.md](references/project-eda-contract.md).
+Use the project-root `eda.yaml`. The field contract and examples are in
+[references/project-eda-contract.md](references/project-eda-contract.md).
+Paths resolve relative to the project root, except absolute paths for installed
+libraries or project assets explicitly configured by the user. Preserve RTL
+source and filelist order.
 
-Required early fields are `name`, `top`, and `rtl`; add `filelists`, `defines`, `include_dirs`, `pdk`, `constraints`, and `dft` as the flow needs them. Paths are resolved relative to the project root.
+Core fields are `name`, `top`, `rtl`, `filelists`, `include_dirs`, and `defines`.
+The executable flows additionally use:
 
-## API
+- VCS simulation: `flows.sim.tb`, optional `flows.sim.top`, `seed`, `test_name`,
+  `plusargs`, and `coverage`.
+- Standalone URG: `flows.coverage.vdb` as one nonempty VDB directory or a list
+  of VDB directories.
+- DC synthesis: `pdk.root`, `pdk.target_library`, optional
+  `pdk.link_libraries`, and `constraints` or `flows.synth.sdc`.
+- PrimeTime STA: the same library/constraint fields and an explicit existing
+  `flows.sta.netlist`.
 
-From a project root:
+## Commands
+
+Run from the project root:
 
 ```bash
-python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" init
 python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" doctor
-python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" report
-python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" validate
 python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" plan --flow sim
-python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" run --flow synth --dry-run
+python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" run --flow sim --dry-run
+python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" run --flow sim --execute
+python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" run --flow synth --execute
+python3 "$HOME/.codex/skills/eda-tool-engineering/scripts/eda.py" run --flow sta --execute
 ```
 
-For a new project, the Skill automatically runs the equivalent of `init` when no `./eda.yaml` exists. It derives a best-effort project name/top from the directory and RTL, and refuses to overwrite an existing file. You can also call `init` explicitly. Review the generated PDK, testbench, filelist, and constraints fields before running a flow.
+`plan` and dry runs produce `NOT_RUN`, never PASS. Only `run --execute` launches
+a tool. Every execution writes `runs/<run-id>/manifest.json`, command scripts,
+logs, source and configuration hashes, stage statuses, tool versions, and
+artifact records. VCS compile, simulation, result checking, and optional URG
+extraction are independent stages with explicit dependencies.
 
-`plan` and `run` never execute a tool unless `--execute` is supplied. Every run gets an isolated `runs/<timestamp>-<flow>/` directory, a command manifest, and environment snapshot. Use `--tool <name>` only for diagnosis; normal selection comes from the installed product homes in `.bashrc`.
+The root `aicflow` command plans and checkpoints the current simulation and
+synthesis pipelines. It delegates each executed stage to `eda.py`. The
+proposed shared contract for the separate PPA campaign interface is documented
+in [the unified execution contract](../../docs/architecture/unified-execution-contract.md).
 
-`report` parses existing DFT reports without starting a tool. `validate` returns non-zero when parsed pre/post DFT reports contain violations. This makes an existing project such as `tsmc28_dft_smoke` a regression test for the API.
+## Capability boundary
 
-The API also discovers a configured RTL top while excluding common testbench names (`tb_*`, `test_*`, `testbench`). DFT→ATPG planning prefers explicit `scan_netlist`/`test_protocol` and otherwise selects the newest generated artifact. ATPG report parsing is best-effort and only reports metrics actually found in logs.
+| Flow | Current implementation |
+|---|---|
+| `sim` | Executable VCS compile → simulation → result checks. Testbench top is selected independently from design top. Simulation must have an explicit pass marker or a zero-error/zero-fatal UVM summary. |
+| `coverage` | Executable URG report extraction from configured existing VDB input. Missing/empty database or missing dashboard blocks the run. |
+| `sim` with coverage | Enables compile-time and runtime VCS coverage instrumentation, then extracts the run VDB with URG. |
+| `synth` | Executable DC SystemVerilog analysis/elaboration, link, SDC application, mapping, netlist and report generation. Missing artifacts or required area/WNS/TNS block PASS. |
+| `sta` | Executable PrimeTime analysis of the explicitly configured gate-level netlist, libraries, and SDC. Required reports and parseable WNS/TNS are checked. |
+| `formality` | Planning only. A generated script requires separately configured Golden and Revised source lists and refuses identical lists. |
+| `cdc` | Planning only. A SpyGlass lint script is not treated as CDC validation. |
+| Other legacy flows | Their planning interfaces and script generation remain available. Execution is `BLOCKED` until an adapter and evidence contract are validated. MBIST/LBIST/APR/Power/StarRC include templates. |
 
-Supported flow names: `sim`, `debug`, `lint`, `cdc`, `formal`, `formality`, `synth`, `dft`, `atpg`, `mbist`, `lbist`, `apr`, `sta`, `power`, and `starrc`. Real command/script adapters are included for VCS, Verdi, SpyGlass, VC Formal, Formality, DC, and TestMAX. The DFT manager generates a DC scan-insertion script, TestMAX ATPG command files for stuck-at/transition, and explicit MBIST/LBIST integration templates; APR/STA/power/StarRC remain next-stage adapters.
+See [the complete adapter matrix](../../docs/eda-adapter-capabilities.md).
 
-## Golden regression: tsmc28_dft_smoke
+`doctor` checks tool availability and config shape; it does not prove that a
+license can be checked out. License, unsupported tool, missing input, failed
+command, timeout, and missing required evidence are represented as
+`BLOCKED`, `FAIL`, or `ERROR`, never silently mapped to PASS.
 
-This project is a small scan/ATPG regression, not a real MBIST design: its reports show 25 valid scan cells, one chain of length 25, and zero pre/post-DFT violations; it has no memory macro. Run `report`/`validate` to test report parsing, and `plan --flow dft|atpg|mbist|lbist` to test script generation. Only run with `--execute` after confirming the PDK/library and license setup.
+## Evidence and limits
 
-## DFT boundary
+`PASS` means only that the configured stage and its required artifacts passed
+the implemented checks. It is not a signoff claim. The local smoke records in
+[`docs/milestone1.md`](../../docs/milestone1.md) used an owned temporary RTL
+fixture and an installed Synopsys example library for DC/STA; they do not
+validate a target PDK or production design.
 
-The DFT manager API is intentionally separate from a single executable. It models scan insertion, compression, test points, IJTAG/IEEE-1687, MBIST, LBIST, ATPG, fault simulation, pattern export, and post-DFT checks. On this host the initial adapters target TestMAX `dft_shell`/`tmax`; MBIST/LBIST commands are emitted as explicit integration points because their availability and license names vary by TestMAX release and delivered memory/BIST IP. Never claim MBIST/LBIST insertion succeeded without a tool log and generated netlist/report.
-
-## Safety and reproducibility
-
-- Confirm the resolved project root and config before execution.
-- Prefer `--dry-run`; require `--execute` for state-changing tool runs.
-- Keep generated files below `runs/`; do not overwrite RTL, PDK, or source constraints.
-- Preserve tool version, command line, license variables, and exit status in the run manifest.
-- Treat license failures and missing PDK/library files as actionable diagnostics, not as successful runs.
+Do not modify installed Synopsys tools, licenses, PDKs, libraries, source RTL,
+or existing verification evidence. Keep generated runs under `runs/` and
+review scripts and reports before relying on results.
