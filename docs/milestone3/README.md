@@ -1,5 +1,9 @@
 # Milestone 3: RTL/PPA Optimization Framework
 
+The Matrix Candidate 001 phase-abort root-cause analysis, Candidate 002 patch,
+and qualified regression/benchmark evidence are documented in
+[`phase-abort-rca.md`](phase-abort-rca.md).
+
 This change adds `skills/rtl-ppa-optimization` and an adapter-driven evaluator
 for measured baselines and bounded RTL candidate patches. It does not replace
 the existing skills or create a new EDA tool adapter. Project commands supply
@@ -10,10 +14,10 @@ accuracy measurements.
 
 | Capability | Framework state | NMAForge Matrix evidence state |
 |---|---|---|
-| Source revision and candidate patch records | Implemented; isolated Git snapshot, compiled-source patch allowlist, plan/source/asset/seed/tool compatibility, fractional per-campaign and cumulative budgets | Not run against NMAForge |
-| Stage artifact and metric evidence | Implemented checks for supported adapter identity, nonempty SHA-256 artifacts, and metric-to-artifact/parser provenance | No real adapter evidence captured |
-| Regression gate | Implemented as a required ordered stage | Existing regression documentation and reference model were found; no adapter is wired to this evaluator |
-| Formal equivalence | Candidate `formal` stage is mandatory for cycle-equivalent plans | No formal campaign evidence captured for this milestone |
+| Source revision and candidate patch records | Implemented; isolated Git snapshot, compiled-source patch allowlist, plan/source/asset/seed/tool compatibility, fractional per-campaign and cumulative budgets | Candidate 002 source, patch, seed, and tool provenance captured in a simulation-performance campaign; no ASIC PPA candidate evaluated |
+| Stage artifact and metric evidence | Implemented checks for supported adapter identity, nonempty SHA-256 artifacts, and metric-to-artifact/parser provenance | Regression, reference-model, latency, and performance artifacts captured for Candidate 002 |
+| Regression gate | Implemented as a required ordered stage | Shared Stage Runtime regression/reference stages passed on three seeds for Candidate 002; Candidate 001 remains rejected |
+| Formal equivalence | Candidate `formal` stage is mandatory for cycle-equivalent plans | No formal campaign; simulation mode uses transaction-level behavior and the existing testbench reference model |
 | Synthesis cell area | Metric gate and report-artifact requirement | No measured area report captured |
 | Setup WNS | Metric gate and report-artifact requirement | No measured STA report captured |
 | Power | Metric gate and report-artifact requirement | No measured power report captured |
@@ -31,22 +35,26 @@ top `tb_ai_tensor_matrix_core_random`. The RTL scope is:
 - `rtl/compute/matrix/ai_tensor_matrix_array.sv`
 - `rtl/compute/matrix/ai_tensor_matrix_datapath.v`
 
-The inspected NMAForge revision was
-`c290eba7697138a4fcf2cbbac9262264849f0aeb`. Existing simulation and reference
-model material provide useful functional starting points, but no reproducible
-area, setup WNS, or power baseline was found. The 250 MHz performance reference
-must not be presented as measured STA or PPA evidence.
+The simulation campaign base revision was
+`409c3a9fd647d4f8c4c881c9bfdaf5d93b7076ee`. The existing simulation and
+testbench reference model provide functional evidence, and a five-workload
+behavioral cycle baseline has been reproduced. No reproducible area, setup WNS,
+or power baseline exists. The 250 MHz performance reference must not be
+presented as measured STA or PPA evidence.
 
-Baseline execution is currently **BLOCKED**. The inspected external NMAForge
-worktree contained untracked `novas.conf` and `novas.rc`; this evaluator requires
-a clean source worktree and intentionally does not ignore or modify those
-files. Its configured private library and SDC inputs also need to be supplied
-to a project adapter as copied read-only assets. The example plan is explicitly
-planning-only and contains placeholder commands and asset paths.
+The ASIC PPA baseline remains **BLOCKED**. The original external NMAForge
+worktree contained untracked `novas.conf` and `novas.rc`; both were preserved,
+and simulation candidates ran only in isolated snapshots. The example ASIC plan
+still has placeholder library, SDC, and adapter inputs.
 
-No licensed EDA command, candidate RTL patch, or external project write was
-performed for this milestone. This repo change therefore delivers the skill
-and evaluation framework, not a measured optimization result or signoff claim.
+Candidate 001 was rejected after the phase-abort test waited for internal state
+`ST_DONE` after the candidate had already completed; no abort was sampled.
+Candidate 002 retains the `ST_DONE`/abort path and passed all configured
+simulation gates with a 0.44% aggregate cycle reduction, below the 5% target.
+Its patch and evidence are documented in
+[`phase-abort-rca.md`](phase-abort-rca.md). No change was applied to the
+original NMAForge worktree, and this simulation result is not ASIC PPA or
+signoff evidence.
 
 ## Evaluation behavior
 
@@ -105,5 +113,5 @@ patches.
   PDK or SDC requires a new baseline.
 - PDK/library assets are copied into a private run snapshot, which can require
   substantial disk space. Symlink-containing asset trees are rejected.
-- No physical PPA smoke run, formal proof, or licensed-tool check was possible
-  or attempted in this repository-only milestone.
+- No synthesis, STA, power run, physical PPA smoke test, or candidate-to-baseline
+  formal proof has been completed for this target.

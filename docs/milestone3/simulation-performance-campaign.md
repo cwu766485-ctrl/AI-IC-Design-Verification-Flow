@@ -1,7 +1,9 @@
 # Matrix Simulation Performance Campaign 001
 
-Status: baseline reproduced; first candidate REJECTED by a required fault/abort
-regression; no candidate performance result is available.
+Status: baseline reproduced; Candidate 001 remains REJECTED by its required
+phase-abort regression; a separate Candidate 002 simulation candidate passed
+configured gates with a 0.44% aggregate cycle reduction. The optimization goal
+was 5%; no PPA result is available.
 
 ## Baseline
 
@@ -86,9 +88,10 @@ SHA-256 for the final Stage Runtime command logs:
 - Intended impact: at most one cycle per workload; below the 5% campaign goal.
 - Functional risk: asserting `done` early may bypass phase-abort behavior.
 - Validation: the same three-seed `core-random-regress` command as baseline.
-- Result: `REJECT`. Seed `20261021` failed because the phase-abort test waiting
-  for `ST_PREFETCH_WAIT` instead observed `done` asserted and the core in IDLE.
-  The required functional gate failed, so the candidate benchmark was skipped.
+- Result: `REJECT`. Seed `20261021` failed because the phase-abort test waited
+  for internal `ST_DONE` (state 11), but Candidate 001 had already asserted
+  `done` and returned to IDLE. `abort` was still low and had not been sampled.
+  The required regression gate failed, so the candidate benchmark was skipped.
 - Decision: preserve failure evidence; do not pursue this change.
 
 Candidate worktree: `/tmp/NMAForge-m3-candidate-409c3a9`. Candidate regression
@@ -101,6 +104,26 @@ The reviewable patch and machine-readable decision are
 [`MATRIX-CYCLE-001.decision.json`](candidates/MATRIX-CYCLE-001.decision.json).
 This is a simulation-only experiment; it contains no synthesis, STA, area,
 frequency, or power result.
+
+## Phase-Abort Root Cause and Candidate 002
+
+Candidate 001's seeded failure was traced in baseline and candidate snapshots.
+The first divergence is at operation-local cycle 22: baseline enters internal
+`ST_DONE` while Candidate 001 enters `IDLE` and asserts `done`. `abort` is still
+low because the testbench asserts it only after reaching the requested state.
+The observed failure is therefore a testbench phase-reachability assumption,
+not evidence of a DUT abort protocol violation. Candidate 001 remains rejected
+because the required regression fails; no assertion or fault check was
+weakened.
+
+A narrower Candidate 002 change skips `ST_NEXT` only after the final tile and
+retains the existing `ST_DONE` path. Three-seed regression passed 18 cases and
+35 fault checks per seed; regression, reference-model, latency, and performance
+Stage Runtime gates all passed. Aggregate cycles changed 2029 to 2020 (-0.44%)
+and weighted useful MAC/cycle changed 45.674 to 45.877 (+0.45%). Workload
+32x32x64 regressed by six cycles, so the result is mixed and below the 5%
+target. See [`phase-abort-rca.md`](phase-abort-rca.md) for traces, patch hash,
+source manifest, and limits.
 
 ## Controller Scope
 

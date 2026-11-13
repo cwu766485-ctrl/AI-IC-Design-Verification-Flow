@@ -1,21 +1,25 @@
 # NMAForge Matrix Optimization Readiness
 
-Status: functional verification reproduced; ASIC PPA baseline blocked; no RTL
-candidate was attempted.
+Status: simulation baseline reproduced; Candidate 001 rejected by the required
+phase-abort regression; Candidate 002 passed configured simulation gates with
+a 0.44% aggregate cycle reduction. ASIC PPA remains blocked; no signoff claim.
 
 ## Integration State
 
 - Integration branch: `feature/m2-r1-verification-integration` at
   `6b81d88cedde3fa32acbff18ee5e6f309e40d094`.
 - PR #3: https://github.com/cwu766485-ctrl/AI-IC-Design-Verification-Flow/pull/3
+- M3 readiness PR #4: https://github.com/cwu766485-ctrl/AI-IC-Design-Verification-Flow/pull/4
 - GitHub Actions for this SHA: both `RTL PPA Python tests` runs succeeded:
   https://github.com/cwu766485-ctrl/AI-IC-Design-Verification-Flow/actions/runs/43424976851
   https://github.com/cwu766485-ctrl/AI-IC-Design-Verification-Flow/actions/runs/43424969667
 - Local pre-readiness results reproduced: `python3.12 -m pytest -q tests`:
   78 passed; `python3.12 -m pytest -q tests/rtl_ppa`: 21 passed.
-- Readiness branch result after adding the controller: full suite 94 passed;
-  PPA-focused suite 37 passed. New-branch GitHub Actions status is pending
-  until its push completes.
+- Readiness branch local result: `python3.12 -m pytest -q tests` passed 99;
+  `python3.12 -m pytest -q tests/rtl_ppa` passed 42. GitHub Actions for the
+  current branch commit `c356124b8b037c8e245fabf4ea53fe2d8bd40faa` passed in
+  [run 43445415952](https://github.com/cwu766485-ctrl/AI-IC-Design-Verification-Flow/actions/runs/43445415952)
+  and [run 43445406484](https://github.com/cwu766485-ctrl/AI-IC-Design-Verification-Flow/actions/runs/43445406484).
 - `python3.12 aicflow --help` succeeds. The wrapper inserts its sibling EDA
   script directory into `sys.path`, then imports the canonical `eda` module.
   This confirms the runtime import works. The reported Pylance warning is
@@ -176,8 +180,9 @@ decision layer around the existing evaluator and Stage Runtime:
   calls and token use remain `null` unless an external telemetry source is
   supplied; no efficiency comparison is claimed.
 
-This implementation deliberately stops before a controlled candidate
-evaluation because a valid measured PPA baseline and approved candidate gate do
-not exist yet. Once those inputs are supplied, the next reviewable change can
-replace the example placeholders with a target-specific adapter and run no
-more than three isolated candidates through `rtl_ppa.py`.
+The simulation-performance mode has now evaluated Candidate 002 through the
+shared Stage Runtime using a reproducible behavioral baseline. This does not
+unblock ASIC optimization: without an approved library/corner, reviewed SDC,
+formal/equivalence policy, and target-specific synthesis/STA setup, the ASIC
+controller must still return `STOP`. Once those inputs are supplied, no more
+than three isolated ASIC candidates can be evaluated through `rtl_ppa.py`.
