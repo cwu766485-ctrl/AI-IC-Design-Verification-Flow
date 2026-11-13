@@ -1,0 +1,495 @@
+{
+  "closure": {
+    "budgets": {
+      "max_campaigns": 3,
+      "max_new_tests": 3,
+      "max_runtime_sec": 7200,
+      "max_seeds": 20,
+      "per_seed_timeout_sec": 1800
+    },
+    "coverage_commands": [
+      {
+        "argv": [
+          "urg",
+          "-full64",
+          "-dir",
+          "{seed_dir_rel}/dma_block/vdb/*.vdb",
+          "-report",
+          "{run_dir_rel}/report"
+        ],
+        "cwd": "dv/block/dma/sim",
+        "name": "dma_block_urg"
+      },
+      {
+        "argv": [
+          "urg",
+          "-full64",
+          "-dir",
+          "{seed_dir_rel}/dma_subsystem_reset/dma_spad.vdb",
+          "-report",
+          "{run_dir_rel}/report"
+        ],
+        "cwd": "dv/subsystem/dma_spad/sim",
+        "name": "dma_subsystem_urg"
+      }
+    ],
+    "fail_patterns": [
+      "UVM_ERROR\\s*:\\s*[1-9]",
+      "UVM_FATAL\\s*:\\s*[1-9]",
+      "TEST FAILED",
+      "Failed to obtain license"
+    ],
+    "pass_patterns": [
+      "UVM Report Summary",
+      "UVM_ERROR\\s*:\\s*0",
+      "UVM_FATAL\\s*:\\s*0"
+    ],
+    "regression_commands": [
+      {
+        "argv": [
+          "make",
+          "uvm_regress",
+          "SIMV={run_dir_rel}/simv_dma_block",
+          "COV_ROOT={run_dir}/vdb"
+        ],
+        "cwd": "dv/block/dma/sim",
+        "expected_tests": [
+          "dma_load_ooo_smoke_test",
+          "dma_2d_load_test",
+          "dma_gather_load_test",
+          "dma_store_booo_test",
+          "dma_store_four_booo_test",
+          "dma_2d_store_test",
+          "dma_aw_stall_stability_test",
+          "dma_narrow_load_test",
+          "dma_4k_load_test",
+          "dma_4k_edge_load_test",
+          "dma_short_tail_store_test",
+          "dma_abort_read_test",
+          "dma_read_slverr_test",
+          "dma_spad_error_drain_test",
+          "dma_write_slverr_test",
+          "dma_abort_write_test",
+          "dma_config_error_test",
+          "dma_backpressure_test",
+          "dma_random_stress_test"
+        ],
+        "name": "dma_block"
+      },
+      {
+        "argv": [
+          "make",
+          "subsystem_run",
+          "SEED={seed}",
+          "SIMV={run_dir_rel}/simv_dma_spad",
+          "COV_DIR={run_dir_rel}/dma_spad.vdb",
+          "RUN_LOG={run_dir_rel}/subsystem.log",
+          "COMPILE_LOG={run_dir_rel}/compile.log"
+        ],
+        "cwd": "dv/subsystem/dma_spad/sim",
+        "expected_tests": [
+          "dma_spad_subsystem_test"
+        ],
+        "name": "dma_subsystem_reset",
+        "pass_patterns": [
+          "UVM Report Summary",
+          "UVM_ERROR\\s*:\\s*0",
+          "UVM_FATAL\\s*:\\s*0"
+        ]
+      }
+    ],
+    "seeds": [
+      20261107,
+      20261108,
+      20261109
+    ]
+  },
+  "features": [
+    {
+      "id": "DMA-F-001",
+      "name": "DDR to SPAD load with tagged, out-of-order reads",
+      "spec_refs": [
+        {
+          "contains": "最多四个 tagged read outstanding",
+          "file": "docs/spec/SPEC_ZH.md"
+        },
+        {
+          "contains": "newest-first R",
+          "file": "dv/block/dma/DMA_UVM_TESTPLAN.md"
+        }
+      ],
+      "testpoints": [
+        {
+          "checker": {
+            "description": "Compare every SPAD word and check the observed completion order.",
+            "id": "DMA-CK-001",
+            "kind": "reference_model",
+            "scope": "DUT_business",
+            "source": "dv/block/dma/env/dma_block_scoreboard.svh"
+          },
+          "coverage": [
+            {
+              "bins": [
+                "load"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "cp_direction"
+            },
+            {
+              "bins": [
+                "four"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "cp_outstanding"
+            }
+          ],
+          "id": "DMA-TP-001",
+          "stimulus": "Accept four read bursts before returning responses, then return newest first.",
+          "tests": [
+            "dma_load_ooo_smoke_test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DMA-F-002",
+      "name": "2-D stride and indexed gather address generation",
+      "spec_refs": [
+        {
+          "contains": "二维 row/stride、indexed gather",
+          "file": "docs/spec/SPEC_ZH.md"
+        },
+        {
+          "contains": "3×4, SPAD-held DDR row pointers",
+          "file": "dv/block/dma/DMA_UVM_TESTPLAN.md"
+        }
+      ],
+      "testpoints": [
+        {
+          "checker": {
+            "description": "Compare generated row addresses and each transferred word against the memory model.",
+            "id": "DMA-CK-002",
+            "kind": "reference_model",
+            "scope": "DUT_business",
+            "source": "dv/block/dma/env/dma_block_scoreboard.svh"
+          },
+          "coverage": [
+            {
+              "bins": [
+                "two_d"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "cp_shape"
+            },
+            {
+              "bins": [
+                "enabled"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "cp_gather"
+            },
+            {
+              "bins": [
+                "load_two_d_enabled"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "x_transfer_modes"
+            }
+          ],
+          "id": "DMA-TP-002",
+          "stimulus": "Run strided load/store rows and gather non-contiguous rows through the SPAD index table.",
+          "tests": [
+            "dma_2d_load_test",
+            "dma_2d_store_test",
+            "dma_gather_load_test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DMA-F-003",
+      "name": "Burst planning and 4 KiB boundary split",
+      "spec_refs": [
+        {
+          "contains": "burst 最多 16 beats，且在每个 4 KiB AXI 边界拆分",
+          "file": "docs/spec/SPEC_ZH.md"
+        },
+        {
+          "contains": "accepted ARs are exactly `0x1ff0/LEN0` then `0x2000/LEN1`",
+          "file": "dv/block/dma/DMA_UVM_TESTPLAN.md"
+        }
+      ],
+      "testpoints": [
+        {
+          "checker": {
+            "WLAST and WSTRB.": null,
+            "data": null,
+            "description": "Assert accepted AR/AW bursts never cross 4 KiB; scoreboard checks split addresses",
+            "id": "DMA-CK-003",
+            "kind": "protocol_sva",
+            "scope": "DUT_protocol",
+            "source": "dv/block/dma/assertions/ai_axi128_dma_sva.sv"
+          },
+          "coverage": [
+            {
+              "bins": [
+                "yes"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "cp_4k"
+            },
+            {
+              "bins": [
+                "short",
+                "multi"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "cp_length"
+            }
+          ],
+          "id": "DMA-TP-003",
+          "stimulus": "Exercise narrow transfers, a page crossing, a transfer starting one beat before the page edge, and 1/2/3-word tails.",
+          "tests": [
+            "dma_narrow_load_test",
+            "dma_4k_load_test",
+            "dma_4k_edge_load_test",
+            "dma_short_tail_store_test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DMA-F-004",
+      "name": "Store response IDs, write stability, and completion drain",
+      "spec_refs": [
+        {
+          "contains": "BID 归因写响应",
+          "file": "docs/spec/SPEC_ZH.md"
+        },
+        {
+          "contains": "IDs 8–11",
+          "file": "dv/block/dma/DMA_UVM_TESTPLAN.md"
+        }
+      ],
+      "testpoints": [
+        {
+          "checker": {
+            "description": "Check AW/W/WLAST and all DDR words",
+            "exact BID ownership and drained response window.": null,
+            "id": "DMA-CK-004",
+            "kind": "reference_model",
+            "scope": "DUT_business",
+            "source": "dv/block/dma/env/dma_block_scoreboard.svh"
+          },
+          "coverage": [
+            {
+              "bins": [
+                "store"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "cp_direction"
+            },
+            {
+              "bins": [
+                "store_linear_disabled"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "x_transfer_modes"
+            }
+          ],
+          "id": "DMA-TP-004",
+          "stimulus": "Hold four write responses, complete BID in reverse order, and stall AW while its payload is valid.",
+          "tests": [
+            "dma_store_booo_test",
+            "dma_store_four_booo_test",
+            "dma_aw_stall_stability_test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DMA-F-005",
+      "name": "Error, abort, reset, and no-reset recovery",
+      "spec_refs": [
+        {
+          "contains": "abort=3",
+          "file": "docs/spec/SPEC_ZH.md"
+        },
+        {
+          "contains": "no-reset recovery",
+          "file": "dv/block/dma/DMA_UVM_TESTPLAN.md"
+        }
+      ],
+      "testpoints": [
+        {
+          "checker": {
+            "accepted-transaction drain": null,
+            "and no-reset recovery data.": null,
+            "description": "Check error ABI",
+            "id": "DMA-CK-005",
+            "kind": "reference_model",
+            "scope": "DUT_business",
+            "source": "dv/block/dma/env/dma_block_scoreboard.svh",
+            "unchanged destination sentinels": null
+          },
+          "coverage": [
+            {
+              "bins": [
+                "load",
+                "store"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "cp_direction"
+            },
+            {
+              "bins": [
+                "abort",
+                "axi_read_error",
+                "spad_error",
+                "axi_write_error",
+                "config_error"
+              ],
+              "group": "dma_error_scenario_cg",
+              "point": "error_kind"
+            }
+          ],
+          "id": "DMA-TP-005",
+          "status": "existing",
+          "stimulus": "Inject read/write SLVERR, SPAD protection error, abort accepted transfers, and reject an unaligned command; follow with a clean transfer.",
+          "tests": [
+            "dma_abort_read_test",
+            "dma_read_slverr_test",
+            "dma_spad_error_drain_test",
+            "dma_write_slverr_test",
+            "dma_abort_write_test",
+            "dma_config_error_test"
+          ]
+        },
+        {
+          "checker": {
+            "and clean post-reset data matches.": null,
+            "description": "Check responder and DMA queues drain on coordinated reset",
+            "id": "DMA-CK-007",
+            "kind": "reference_model",
+            "no stale DMA/SPAD activity returns": null,
+            "scope": "system_business",
+            "source": "dv/subsystem/dma_spad/tests/dma_spad_subsystem_test.svh"
+          },
+          "coverage": [
+            {
+              "bins": [
+                "all_four_ar_before_any_r",
+                "first_r_beat_accepted_next_stalled"
+              ],
+              "group": "dma_reset_phase_cg",
+              "point": "cp_phase"
+            }
+          ],
+          "id": "DMA-TP-007",
+          "status": "existing",
+          "stimulus": "Reset while four DMA read addresses are accepted and before any R response, then repeat after the first R beat and run a post-reset recovery transfer.",
+          "tests": [
+            "dma_spad_subsystem_test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DMA-F-006",
+      "name": "Backpressure and constrained-random transfers",
+      "spec_refs": [
+        {
+          "contains": "deterministic stalls + OOO R",
+          "file": "dv/block/dma/DMA_UVM_TESTPLAN.md"
+        },
+        {
+          "contains": "replay through `SEED`",
+          "file": "dv/block/dma/DMA_UVM_TESTPLAN.md"
+        }
+      ],
+      "testpoints": [
+        {
+          "checker": {
+            "description": "Detect deadlock",
+            "id": "DMA-CK-006",
+            "kind": "reference_model",
+            "scope": "DUT_business",
+            "score every command and compare all transferred words.": null,
+            "source": "dv/block/dma/env/dma_block_scoreboard.svh"
+          },
+          "coverage": [
+            {
+              "bins": [
+                "load",
+                "store"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "cp_direction"
+            },
+            {
+              "bins": [
+                "many",
+                "four"
+              ],
+              "group": "dma_cmd_cg",
+              "point": "cp_outstanding"
+            }
+          ],
+          "id": "DMA-TP-006",
+          "stimulus": "Independently stall AR/AW/W/SPAD channels, reorder responses, then run legal randomized load/store commands with recorded seeds.",
+          "tests": [
+            "dma_backpressure_test",
+            "dma_random_stress_test"
+          ]
+        }
+      ]
+    }
+  ],
+  "plan_sha256": "4908b295efe03507f0195f15fd64b3eb088e9a5bf8e96c2981af1930349e73a2",
+  "plan_source": "<repository-root>/skills/verification-closure/references/dma-plan-example.yaml",
+  "project": "NMAForge",
+  "project_root": "<NMAForge-snapshot>",
+  "schema_version": 1,
+  "source_hashes": {
+    "<NMAForge-snapshot>/docs/spec/SPEC_ZH.md": "47ed9ac33783c06ec02be361a39a4a52609c70420b921b9fc290f3b1cb93a735",
+    "<NMAForge-snapshot>/dv/block/dma/DMA_UVM_TESTPLAN.md": "92eb6b340fbb7bbb3c513d586d5584b87d5586c666bdfa7fc96ae7431adb7d8e",
+    "<NMAForge-snapshot>/dv/block/dma/agent/dma_block_agent_pkg.sv": "5818206b638fb39190acdf66ced3fffa732abecf13e77e8928e40c68d16ad312",
+    "<NMAForge-snapshot>/dv/block/dma/agent/dma_block_types_pkg.sv": "7301069adc72b354ec48f10717978e77e5b197f7a78c9e62879329965e85f2b5",
+    "<NMAForge-snapshot>/dv/block/dma/agent/interfaces/ai_dma_axi_if.sv": "db20fd242c28e2a535a2bef3cf0a3004cbc7e683abdf287d6bc7e95ff8ebd74f",
+    "<NMAForge-snapshot>/dv/block/dma/agent/interfaces/ai_dma_ctrl_if.sv": "d90136573caef3d9c2d249a1ef4d73a4f1df8b67613136ea50aceedf673103ec",
+    "<NMAForge-snapshot>/dv/block/dma/agent/interfaces/ai_dma_spad_if.sv": "7b299e456a2e0e304ae0d61cb38fc97addc05fc3e4a0739dd58aa72120dcc0c4",
+    "<NMAForge-snapshot>/dv/block/dma/assertions/ai_axi128_dma_sva.sv": "ff704f1818bf31e4beed48d2b0770d4575559c96c145f78fdc46234f20220663",
+    "<NMAForge-snapshot>/dv/block/dma/env/axi_memory_model.sv": "5801eac499c7ecffb27185db9a39865df5abd535f9740205b2043e8b72d0cedc",
+    "<NMAForge-snapshot>/dv/block/dma/env/dma_block_env_pkg.sv": "ccbf69959d6b2fd22a7888f707bb73dfbeb3ee01dd46fb9c6bf29b91b340c716",
+    "<NMAForge-snapshot>/dv/block/dma/env/dma_block_scoreboard.svh": "09f4924d899b3b786fce94d08c77b075ca8103dd25376997bfc202eb8fee6ff9",
+    "<NMAForge-snapshot>/dv/block/dma/sim/dma_block_uvm.f": "8df1dca24239b83afbd6ecd46e99595975adcafcbf942091b6bae6bf7c67e25e",
+    "<NMAForge-snapshot>/dv/block/dma/tb/tb_ai_axi128_dma_uvm.sv": "6653c17a9a769ef7ec3e8e9dfbf539778c800487db94d4a301305545b84ae759",
+    "<NMAForge-snapshot>/dv/block/dma/tests/dma_block_tests_pkg.sv": "e0b240ad5c263a8adf1d3696b7aa96db24eb7152da931759d7f7589d1c3d7fc6",
+    "<NMAForge-snapshot>/dv/subsystem/dma_spad/assertions/ai_dma_spad_subsystem_sva.sv": "033d501a302473d121bd4d375f57c9c39ef60694a6911f6ce81b4bba05a7c726",
+    "<NMAForge-snapshot>/dv/subsystem/dma_spad/sim/dma_spad_subsystem_uvm.f": "4cdead515e24158ffe1983678d35431cd3f16fefd41d3535ad9eaf2db4518ce0",
+    "<NMAForge-snapshot>/dv/subsystem/dma_spad/tb/ai_dma_spad_system_if.sv": "aadca96f06fbc2f3437bcaf0471a9cd4eed970bd92b0067cf4605551695b2ef1",
+    "<NMAForge-snapshot>/dv/subsystem/dma_spad/tb/dma_spad_subsystem_pkg.sv": "4aa6876455057aaa3daa365867faa732bc09c2f8c5bc22a1b9c235b6c82f8403",
+    "<NMAForge-snapshot>/dv/subsystem/dma_spad/tb/tb_ai_dma_spad_subsystem_uvm.sv": "ac96caa828e75a57288c00fcc4d6e2a0a2d42b4174e457b2a082c5686f962575",
+    "<NMAForge-snapshot>/dv/subsystem/dma_spad/tests/dma_spad_subsystem_test.svh": "1e24ef110a616999256f69c16527b3d77a98e54b0d1c93a13d35ca9624cd5e68",
+    "<NMAForge-snapshot>/rtl/compute/cnm/ai_bank_local_controller.v": "8af443aa57a7f332f6727e3c10271ed50c1a7c8dfa4161363c2862b030e9e30a",
+    "<NMAForge-snapshot>/rtl/compute/cnm/ai_bank_pe.v": "5ca9a297834d342702aea6f4c11616f53f4427a70b766d08e6fcd3ecc524d96b",
+    "<NMAForge-snapshot>/rtl/compute/cnm/ai_banked_cnm_core.v": "b13efd4e314cab104e1627c84340c448ceedf24f1153401c6319326d6063d5f3",
+    "<NMAForge-snapshot>/rtl/compute/fp/ai_bf16_mul_fp32.v": "2535f251dce7aecf797ea20a139008ef707b6110e0fac39de14416ca664c1f54",
+    "<NMAForge-snapshot>/rtl/compute/fp/ai_fp16_mul_fp32.v": "3efec0b3dd65fefb97e74022afbd09bc7905050db81d94c3e1ce9d75c519629f",
+    "<NMAForge-snapshot>/rtl/compute/fp/ai_fp32_accumulator.v": "decc5b61325406fbc0ae998a5b727cf2099970d05e218d0c45cf0cb0d431e3f9",
+    "<NMAForge-snapshot>/rtl/compute/fp/ai_fp32_add.v": "1a8599cfd6d8fea2e10cb9b8cc4f84dcfb990a11e13469572c48b393f4d051f2",
+    "<NMAForge-snapshot>/rtl/compute/fp/ai_mixed_precision_dot_fp32_core.v": "0c31adf0316370520e50271aaf65cdff64c95373dcbc1fdaba12a13392f016e1",
+    "<NMAForge-snapshot>/rtl/dma/ai_axi128_dma.v": "e5b8055dba552ffc0828c2473b93458f63247f34ccea68df3451ea1b4f8fe6cb",
+    "<NMAForge-snapshot>/rtl/dma/ai_dma_burst_planner.v": "c58e8d2301782983c2af51d1eb2cecc246bad4d0963da5bef6fc3fa4649285f2",
+    "<NMAForge-snapshot>/rtl/dma/ai_dma_read_slot_tracker.v": "084c81dd3b5e6c71063124a493d8f54ffd201f634fb8fa22f2afc35b1bdacc4a",
+    "<NMAForge-snapshot>/rtl/dma/ai_dma_spad_transfer_adapter.v": "d06a971a3c03cb96e9bb74b7e8826092ccf13805b336cff7513dcd881cb4f5e6",
+    "<NMAForge-snapshot>/rtl/dma/ai_dma_write_response_tracker.v": "542010e61b310dda17f04d9f77de8a7e08872d25e72a11d2957f5dafd3cf249f",
+    "<NMAForge-snapshot>/rtl/memory/ai_scratchpad.v": "ae5d0d2339e8fd8e2017a3106607d60e1cb3af17f23690b54be44f4ad72d8822",
+    "<NMAForge-snapshot>/rtl/memory/ai_spad_arbiter.v": "a228f30583889ddc62ce2886e8b3f7eb81d05afe140c44b92871b0e6679d9288",
+    "<NMAForge-snapshot>/rtl/memory/ai_spad_protection.v": "850bb24686042958a4ccdd4189d6844441709e76d05eda7fe0bd9e95585419ed",
+    "<NMAForge-snapshot>/rtl/top/fabric/memory/ai_accel_memory_fabric.v": "9e839d9bc7dcb8ecab5b75211485c37ffe047af71ed4ddec7880fea5087a9db2",
+    "<NMAForge-snapshot>/rtl/top/fabric/memory/ai_accel_spad_subsystem.v": "ad131cc957dd6196a68348c94c2a78398ce7478cb3777f0d4f46bec424807d40",
+    "<NMAForge-snapshot>/rtl/top/fabric/memory/ai_spad_response_demux.v": "01b68c4607c6ffc58b70337a45755104038874bf6102ccd098842a666e3430c2"
+  },
+  "source_revision": "c290eba7697138a4fcf2cbbac9262264849f0aeb"
+}

@@ -1,25 +1,66 @@
-name: my_chip
-top: chip_top
+# Copy and adapt into a project's root as eda.yaml. Paths resolve from there.
+name: small_block
+top: block_top
 rtl:
-  - rtl/chip_top.sv
-  - rtl/**/*.sv
+  - rtl/block_top.sv
 filelists:
-  - sim/rtl.f
+  - dv/rtl.f
 include_dirs:
   - rtl/include
-defines: [SYNTHESIS]
+defines:
+  - SYNTHESIS
+
+# Keep installed tool / PDK paths local to the authorized machine.
 pdk:
-  root: /path/to/pdk/TSMC28
-  target_library: lib/slow.db
-constraints: constraints/chip.sdc
+  root: /authorized/pdk-or-library-root
+  target_library: stdcell/slow.db
+  link_libraries:
+    - stdcell/memory.db
+constraints: constraints/block.sdc
+
+# Local execution is the default. For an approved remote Linux checkout,
+# replace with the SSH form below; the runner requires clean matching Git SHA
+# and eda.yaml contents, and does not silently fall back to local execution.
+runner:
+  kind: local
+# runner:
+#   kind: ssh
+#   host: approved-eda-runner
+#   project_root: /work/projects/small_block
+#   python: python3
+#   connect_timeout_sec: 10
+
 flows:
-  sim: {simulator: vcs, tb: sim/tb_top.sv}
-  synth: {tool: dc, script: scripts/run_dc.tcl}
-  apr: {tool: icc2, script: scripts/run_icc2.tcl}
-  sta: {tool: pt, script: scripts/run_pt.tcl}
+  sim:
+    tb: dv/tb_block_top.sv
+    top: tb_block_top
+    timeout_sec: 900
+    coverage: line+cond+tgl+fsm+branch
+    functional_coverage: true
+    debug: true
+    tests:
+      - name: smoke_seed_11
+        seed: 11
+        test_name: smoke_test
+        plusargs: [MODE=basic]
+      - name: smoke_seed_23
+        seed: 23
+        test_name: smoke_test
+        plusargs: [MODE=basic]
+  # For a separate coverage run, configure one VDB or an ordered list.
+  coverage:
+    vdb: runs/<regression-run-id>/simv.vdb
+    functional: true
+  synth:
+    tool: dc
+    # Optional SAIF from this design/testbench, with the exact instance path.
+    # Without SAIF the DC power report uses tool-default activity assumptions
+    # and is not a signoff power result.
+    # activity_file: runs/<regression-run-id>/activity.saif
+    # activity_instance: tb_block_top/dut
+  sta:
+    tool: pt
+    # Pin the exact netlist used for this analysis; do not infer a latest run.
+    netlist: runs/<synthesis-run-id>/netlist.v
 dft:
-  enabled: true
-  scan: {chains: 8, compression: true}
-  mbist: {enabled: true, controller: vendor_ip, config: dft/mbist.yml}
-  lbist: {enabled: false, controller: vendor_ip}
-  atpg: {faults: [stuck_at, transition], tool: tmax}
+  enabled: false

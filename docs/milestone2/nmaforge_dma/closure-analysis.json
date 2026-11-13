@@ -1,0 +1,143 @@
+{
+  "coverage_bins": {
+    "dma_cmd_cg.cp_4k.yes": {
+      "count": 2,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_direction.load": {
+      "count": 41,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_direction.store": {
+      "count": 22,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_gather.enabled": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_length.multi": {
+      "count": 41,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_length.short": {
+      "count": 7,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_outstanding.four": {
+      "count": 40,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_outstanding.many": {
+      "count": 21,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.cp_shape.two_d": {
+      "count": 3,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.x_transfer_modes.load_two_d_enabled": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_cmd_cg.x_transfer_modes.store_linear_disabled": {
+      "count": 21,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_error_scenario_cg.error_kind.abort": {
+      "count": 2,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_error_scenario_cg.error_kind.axi_read_error": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_error_scenario_cg.error_kind.axi_write_error": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_error_scenario_cg.error_kind.config_error": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_error_scenario_cg.error_kind.spad_error": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_reset_phase_cg.cp_phase.all_four_ar_before_any_r": {
+      "count": 3,
+      "hit": 1,
+      "total": 1
+    },
+    "dma_reset_phase_cg.cp_phase.first_r_beat_accepted_next_stalled": {
+      "count": 1,
+      "hit": 1,
+      "total": 1
+    }
+  },
+  "findings": [
+    {
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-001",
+      "feature_id": "DMA-F-001",
+      "testpoint_id": "DMA-TP-001"
+    },
+    {
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-002",
+      "feature_id": "DMA-F-002",
+      "testpoint_id": "DMA-TP-002"
+    },
+    {
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-003",
+      "feature_id": "DMA-F-003",
+      "testpoint_id": "DMA-TP-003"
+    },
+    {
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-004",
+      "feature_id": "DMA-F-004",
+      "testpoint_id": "DMA-TP-004"
+    },
+    {
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-007",
+      "feature_id": "DMA-F-005",
+      "testpoint_id": "DMA-TP-007"
+    },
+    {
+      "classification": "missing_checker_evidence",
+      "detail": "checker attempt/failure evidence missing for DMA-CK-006",
+      "feature_id": "DMA-F-006",
+      "testpoint_id": "DMA-TP-006"
+    }
+  ],
+  "global_fail_patterns": [],
+  "missing_pass_patterns": [],
+  "plan_hash_match": true,
+  "plan_sha256": "d2a29af5cc74f390ebb8bd24b6772e8476d29ddaea92b5f21100a0637b6c8174",
+  "run_count": 6,
+  "run_failures": [],
+  "status": "OPEN",
+  "urg_reports": [
+    "runs/verification-closure/m2-runtime-final-20261113/seed-20261107/dma_block_urg/report",
+    "runs/verification-closure/m2-runtime-final-20261113/seed-20261107/dma_subsystem_urg/report"
+  ]
+}

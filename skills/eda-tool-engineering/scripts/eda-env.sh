@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
+# Source after setting the product homes installed on this host.
 set -euo pipefail
-export SCL_HOME="${SCL_HOME:-/opt/Synopsys/scl/2024.06}"
-export VCS_HOME="${VCS_HOME:-/opt/Synopsys/vcs/V-2023.12-SP1}"
-export VERDI_HOME="${VERDI_HOME:-/opt/Synopsys/verdi/V-2023.12-SP2}"
-export DC_HOME="${DC_HOME:-/opt/Synopsys/syn/V-2023.12-SP1}"
-export ICC_HOME="${ICC_HOME:-/opt/Synopsys/icc/V-2023.12-SP3}"
-export ICC2_HOME="${ICC2_HOME:-/opt/Synopsys/icc2/V-2023.12-SP3}"
-export PRIME_HOME="${PRIME_HOME:-/opt/Synopsys/prime/V-2023.12-SP2}"
-export FM_HOME="${FM_HOME:-/opt/Synopsys/fm/V-2023.12-SP3}"
-export LC_HOME="${LC_HOME:-/opt/Synopsys/lc/V-2023.12}"
-export SPYGLASS_HOME="${SPYGLASS_HOME:-/opt/Synopsys/spyglass/V-2023.12-SP1/SPYGLASS_HOME}"
-export RTLA_HOME="${RTLA_HOME:-/opt/Synopsys/rtla/V-2023.12-SP4}"
-export STARRC_HOME="${STARRC_HOME:-/opt/Synopsys/starrc/V-2023.12-SP2}"
-export VC_FORMAL_HOME="${VC_FORMAL_HOME:-/opt/Synopsys/vc_formal/V-2023.12-SP2}"
-export TESTMAX_HOME="${TESTMAX_HOME:-/opt/Synopsys/testmax/V-2023.12-SP5}"
-export PATH="$ICC2_HOME/bin:$ICC_HOME/bin:$DC_HOME/bin:$PRIME_HOME/bin:$FM_HOME/bin:$LC_HOME/bin:$SPYGLASS_HOME/bin:$RTLA_HOME/bin:$STARRC_HOME/bin:$VCS_HOME/bin:$VERDI_HOME/bin:$VC_FORMAL_HOME/bin:$TESTMAX_HOME/bin:$SCL_HOME/linux64/bin:$PATH"
-export VCS_ARCH_OVERRIDE="${VCS_ARCH_OVERRIDE:-linux}"
+eda_paths=()
+for eda_home_var in SCL_HOME VCS_HOME VERDI_HOME DC_HOME FC_HOME ICC_HOME ICC2_HOME PRIME_HOME FM_HOME LC_HOME SPYGLASS_HOME RTLA_HOME STARRC_HOME VC_FORMAL_HOME TESTMAX_HOME; do
+  eda_home="${!eda_home_var:-}"
+  if [[ -n "$eda_home" && -d "$eda_home/bin" ]]; then
+    eda_paths+=("$eda_home/bin")
+  fi
+done
+if ((${#eda_paths[@]})); then
+  eda_joined=$(IFS=:; echo "${eda_paths[*]}")
+  export PATH="$eda_joined:$PATH"
+fi
+unset eda_home_var eda_home eda_paths eda_joined

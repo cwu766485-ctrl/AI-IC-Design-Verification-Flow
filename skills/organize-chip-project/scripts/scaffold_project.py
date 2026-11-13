@@ -5,77 +5,56 @@ import argparse
 from pathlib import Path
 
 FILES = {
-    "AGENTS.md": """# Project guide
-
-## Purpose and current state
-
-TODO: Describe the chip/IP, maturity, supported configurations, and current status.
-
-## Source-of-truth map
-
-TODO: Link authoritative specs, design sources, verification sources, constraints, and flow configuration.
-
-## Setup and canonical commands
-
-TODO: Record exact environment, build, simulation, regression, lint, synthesis, and result-inspection commands that actually exist.
-
-## Design and verification conventions
-
-TODO: Record hierarchy, tops, clocks/resets, source ordering, test selection, seeds, and acceptance rules.
-
-## Generated, third-party, and protected areas
-
-TODO: Mark generated sources, vendor/PDK/licensed content, secrets, outputs, and files that agents must not modify.
-
-## Validation expectations
-
-TODO: State checks required for documentation, RTL, DV, constraint, and flow changes.
-
-## Active work and known issues
-
-See `docs/exec-plans/active/execution-frontier.md`.
-""",
     "docs/project-overview.md": """# Project overview
 
-TODO: Capture purpose, stakeholders, lifecycle stage, variants, top-level blocks, interfaces, clocks/resets, dependencies, and authoritative sources. Mark unknowns explicitly.
+No project-specific facts have been established at scaffold time.
+
+Before adding RTL or DV, record the project/IP purpose, lifecycle stage, supported configurations, top-level blocks, interfaces, clocks/resets, dependencies, and authoritative requirement sources. Mark each unknown explicitly rather than inferring it.
 """,
     "docs/spec/index.md": """# Specification index
 
-TODO: List normative specifications, versions, owners, requirement identifiers, and their implementation/verification traceability.
+No normative specification is indexed yet.
+
+Add each authoritative requirement/specification with version, owner, requirement identifier, and implementation/verification traceability. Do not treat this index as the specification itself.
 """,
     "docs/architecture/index.md": """# Architecture index
 
-TODO: Map hierarchy, interfaces, data/control paths, clock/reset/power domains, parameters, registers, and implementation notes to authoritative documents.
+No architecture facts are indexed yet.
+
+Map hierarchy, interfaces, data/control paths, clock/reset/power domains, parameters, registers, and implementation notes to authoritative documents as they are created.
 """,
     "docs/verification/strategy.md": """# Verification strategy
 
-TODO: Record scope, environments, test levels, reference models, assertions/formal plan, coverage model, regressions, configurations, exclusions, and signoff criteria.
+No verification strategy is established yet.
+
+Before claiming verification progress, define scope, environments, test levels, reference models, assertions/formal plan, coverage model, regressions, configurations, exclusions, and signoff criteria.
 """,
-    "docs/exec-plans/active/execution-frontier.md": """# Execution frontier
+    "docs/exec-plans/active/execution-frontier.md": """<!-- organize-chip-project:generated-file -->
+# Execution frontier
 
 ## Objective
 
-TODO
+Establish the project specification, design/DV scope, and first reproducible smoke check without inventing requirements or flow commands.
 
 ## Baseline and evidence
 
-TODO: Record revision, workspace state, environment, commands, outcomes, and log paths.
+No baseline exists yet. Record revision, workspace state, environment, commands, outcomes, and log paths before the first functional change.
 
 ## Completed
 
-TODO
+No completed work recorded.
 
 ## Current state and blockers
 
-TODO
+Project requirements, RTL/DV hierarchy, and canonical tool commands have not yet been established.
 
 ## Exact next action
 
-TODO: Give the next command or edit and expected result.
+Fill `docs/project-overview.md` and `docs/spec/index.md` from authoritative input, then run `generate_agent_native.py <project-root> --apply --update-agents` to refresh the Agent entrance.
 
 ## Acceptance criteria and residual risk
 
-TODO
+The project is not ready to claim functional equivalence, verification closure, or signoff until requirements and reproducible checks exist.
 """,
     ".gitignore": """# Reproducible run outputs (adjust to the project's established policy)
 runs/
