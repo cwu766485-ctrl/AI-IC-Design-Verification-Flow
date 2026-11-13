@@ -5,7 +5,7 @@
     "campaign_status": "FAIL",
     "failed_stage": "regression",
     "failed_seed": 20261021,
-    "failure": "phase-abort target ST_PREFETCH_WAIT was not reached; candidate had asserted done and returned to IDLE",
+    "failure": "phase-abort target state=11 (ST_DONE) was not reached; candidate had asserted done and returned to IDLE",
     "runtime_error_class": "COMMAND_FAILED",
     "dependent_stages": {
       "reference_model": "SKIPPED",

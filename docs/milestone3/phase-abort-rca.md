@@ -1,10 +1,12 @@
 # Matrix Candidate 001 Phase-Abort RCA
 
-Status: Candidate 001 remains `REJECT`. Its reported failure is a testbench
-reachability assumption, not evidence that an asserted abort was ignored. A
-separate, narrower Candidate 002 patch passed the configured simulation gates
-in an isolated NMAForge snapshot. Its workload improvement is small and mixed;
-it does not meet the campaign's 5% target and is not a PPA or signoff result.
+Status: the original Candidate 001 failure was a testbench reachability
+assumption, not evidence that an asserted abort was ignored. The old regression
+failure remains recorded. After moving the abort stimulus to a final-write
+pending boundary and aligning workload stimulus, Candidate 001R2 and
+Candidate 002R2 both passed the configured simulation gates in isolated
+NMAForge snapshots. Each changed the five-workload total by -0.25%, below the
+5% target. No PPA or signoff result is available.
 
 ## Scope and preservation
 
@@ -56,16 +58,20 @@ responses; the design's top-level abort handler applies while `busy` is high.
 The inspected contract does not require a fixed completion latency or require
 the internal `ST_DONE` encoding to be externally reachable.
 
-Therefore Candidate 001's observed failure does not establish an abort
-protocol violation: the test never presented an abort. The strict regression
-still correctly rejects Candidate 001 because the implementation-level phase
-test can no longer execute its intended abort check. Resolving that test
-contract would require a test that asserts abort at an externally meaningful
-condition (for example, before completion while `busy`) and checks the same
-error, drain, and no-write-after-abort properties. Such a test change is not
-included in this RCA, and no existing check was weakened.
+The written contract is NMAForge `docs/spec/COMPUTE_CLUSTER_SPEC_ZH.md`
+REQ-PC-009 and the Matrix P0-B/P0-C abort-drain requirements. They require
+stopping new reads, draining already accepted responses, and reporting abort
+completion; they do not prescribe cycle counts or internal state encodings.
 
-## Narrow alternative: Candidate 002
+Therefore Candidate 001's observed failure does not establish an abort
+protocol violation: the test never presented an abort. The old regression
+result still correctly records that Candidate 001 could not pass that test
+revision. The isolated test-contract branch now asserts abort while the final
+output line is valid and stalled, with `busy` high; it checks `ERR_ABORT`, no
+additional line/scalar writes, and accepted-read drain. No assertion,
+scoreboard check, or fault check was removed or weakened.
+
+## Initial Candidate 002 Comparison (Superseded)
 
 Candidate 002 preserves the `ST_DONE` handling and abort path. Only after the
 final output line does it detect that row tile, column tile, and instance are
@@ -112,7 +118,69 @@ This suggests further profiling should focus on prefetch/arbiter interaction
 and writeback acceptance, then isolate compute, prefetch, and writeback stalls
 with non-overlapping cycle attribution before proposing another RTL change.
 
-## Campaign Instrumentation
+## Corrected Replay: Candidate 001R2 And Candidate 002R2
+
+The isolated test-contract branch starts at
+`409c3a9fd647d4f8c4c881c9bfdaf5d93b7076ee`; commits
+`987c957e32a3be71e7d8b593e8d7a515eecf9b42` and
+`52353d5454284e05119764705fb8a6e406a5c8f4` update the abort stimulus and
+per-workload backpressure seeding. The revised testbench SHA-256 is
+`7b886201d9f95d22aee03f2c8826aa217a819e3ef73d5393ad05cd5e1d1dc85c`.
+
+Baseline and both isolated candidates passed regression and reference-model
+stages on seeds `20261021/20261022/20261023`; each seed passed 18 cases and 35
+fault checks. The corrected final-write case reports
+`MATRIX_CORE_PHASE_ABORT_PASS phase=final_write_pending id=29 prior_writes=3/0`.
+Regression, reference-model, latency-gate, and performance Stage Runtime
+stages passed for all three snapshots. A final-write abort-ignored negative
+control failed with `done/error/code/busy=0/0/0/1`.
+
+The earlier Candidate 002 comparison let random backpressure continue between
+workloads, so an RTL cycle change could shift later workload stimulus. The
+aligned rerun below re-seeds stalls per workload and supersedes the earlier
+cycle comparison for A/B conclusions. Results use seed `20261113`:
+
+| Workload MxNxK | Baseline cycles | Candidate 001R2 | Candidate 002R2 |
+| --- | ---: | ---: | ---: |
+| 4x4x32 | 78 | 77 | 77 |
+| 8x8x32 | 110 | 109 | 109 |
+| 16x16x32 | 230 | 229 | 229 |
+| 16x32x32 | 403 | 402 | 402 |
+| 32x32x64 | 1189 | 1188 | 1188 |
+| Aggregate | 2010 | 2005 (-0.25%) | 2005 (-0.25%) |
+
+Weighted useful MAC/cycle changed from 46.105 to 46.220 (+0.25%). Both
+candidates passed the four configured simulation stages, but neither met the
+5% target. This is not ASIC PPA evidence. Logs and Stage Runtime artifacts are
+retained at `/tmp/nmaforge_m3_phaseabort_aligned_stagecampaign`; machine-readable
+decisions are `MATRIX-CYCLE-001R2.decision.json` and
+`MATRIX-CYCLE-002R2.decision.json` in the NMAForge report branch.
+
+For the aligned baseline `32x32x64` run (1189 cycles), mutually exclusive FSM
+state counts are prefetch wait 500 (42.05%), write 320 (26.91%), MAC 256
+(21.53%), prepare-MAC 64 (5.38%), A/B requests and waits 44 (3.70%), and next
+plus done 5 (0.42%). Event counters overlap those state totals: arbiter stall
+210, writeback wait 64, response wait 11. Follow-up profiling should separate
+prefetch response delay from arbiter denial and productive write cycles from
+writeback stalls before another RTL change. No third candidate was attempted
+after the two measured candidates showed the same 0.25% change.
+
+## Corrected Campaign Instrumentation
+
+| Measure | Observed result |
+| --- | --- |
+| Unique RTL candidates | 2: Candidate 001R2 and Candidate 002R2 |
+| Corrected simulation gate rate | 2/2 candidates passed all four Stage Runtime stages; baseline also passed |
+| 5% cycle objective | 0/2; both candidates changed the aligned total from 2010 to 2005 cycles (-0.25%) |
+| Weighted useful MAC/cycle | 46.105 baseline; 46.220 for both candidates (+0.25%) |
+| Functional regression | 3 seeds per snapshot, 18 cases and 35 fault checks per seed; no corrected-candidate failures; the abort-ignored negative control was detected |
+| Stage Runtime elapsed | 34.527 s across baseline and both candidates; candidate runs were 12.045 s and 11.162 s |
+| VCS tool runs | 12 compile invocations and 24 Stage Runtime simulation runs; 3 additional archived simulation reports cover the first-divergence and negative-control runs |
+| Cache hits | Not separately recorded; all configured stages have execution-attempt records |
+| Area and WNS | Not measured; ASIC PPA remains STOP |
+| Agent calls, token use, human intervention count | Not instrumented; no efficiency comparison is claimed |
+
+## Initial Campaign Instrumentation (Historical)
 
 | Measure | Observed result |
 | --- | --- |
@@ -135,8 +203,12 @@ two simulation metrics; the separate 5% campaign objective was not met.
 
 ## Decision
 
-- Candidate 001: `REJECT` remains in force; its required regression fails.
-- Candidate 002: isolated simulation experiment passed all configured gates;
-  retain as a reviewable candidate, with no claim of meeting the 5% objective.
+- Candidate 001's original `REJECT` remains attached to its old failing
+  regression run; Candidate 001R2 passes the corrected simulation gates.
+- Candidate 002R2 passed the corrected simulation gates and remains a
+  reviewable simulation candidate; it does not meet the 5% objective.
+- The original failure was a testbench reachability defect, not a demonstrated
+  DUT abort violation. A retained negative control confirms the corrected
+  final-write abort checker detects ignored abort behavior.
 - No verification signoff or PPA improvement is claimed.
 - Original assertions, scoreboards, and fault checks remain intact.

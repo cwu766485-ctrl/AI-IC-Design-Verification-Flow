@@ -1,9 +1,10 @@
 # Matrix Simulation Performance Campaign 001
 
-Status: baseline reproduced; Candidate 001 remains REJECTED by its required
-phase-abort regression; a separate Candidate 002 simulation candidate passed
-configured gates with a 0.44% aggregate cycle reduction. The optimization goal
-was 5%; no PPA result is available.
+Status: the original Candidate 001 failure exposed a testbench dependency on
+internal `ST_DONE`, not an abort sampled and ignored by the DUT. The corrected
+test-contract replay passed all simulation gates for Candidate 001R2 and
+Candidate 002R2. With per-workload backpressure aligned, both measured a 0.25%
+cycle reduction, below the 5% goal. ASIC PPA remains unmeasured.
 
 ## Baseline
 
@@ -79,6 +80,43 @@ SHA-256 for the final Stage Runtime command logs:
 | latency_gate | `78a49b438eb87374d436ed148fe661b367b7eb291a3661264047293d4d5d221a` |
 | performance | `89c88c63634ff271c182efe8689e7e694eb253a1c5599a6378e5702ea98d8195` |
 
+## Corrected Regression And Aligned Benchmark
+
+The isolated test-contract branch uses NMAForge base
+`409c3a9fd647d4f8c4c881c9bfdaf5d93b7076ee` plus test commits
+`987c957e32a3be71e7d8b593e8d7a515eecf9b42` and
+`52353d5454284e05119764705fb8a6e406a5c8f4`. The directed abort test now holds
+the final output line stalled after three writes and checks `ERR_ABORT`, no
+additional writes, and response drain. No assertion, scoreboard, or fault
+check was weakened.
+
+Baseline and isolated Candidate 001/002 snapshots passed regression and
+reference-model stages on seeds `20261021/20261022/20261023`; each seed passed
+18 cases and 35 fault checks. Shared Stage Runtime regression, reference,
+latency-gate, and performance stages passed for all snapshots. A final-write
+abort-ignored mutation was detected with
+`done/error/code/busy=0/0/0/1`.
+
+Commit `52353d54` also resets backpressure per workload, so a cycle change in
+one workload cannot shift later workloads' stimulus. This aligned seed
+`20261113` result supersedes the earlier 0.44% comparison, which used a
+continuous workload-dependent random stream:
+
+| Workload MxNxK | Baseline cycles | Candidate 001R2 | Candidate 002R2 |
+| --- | ---: | ---: | ---: |
+| 4x4x32 | 78 | 77 | 77 |
+| 8x8x32 | 110 | 109 | 109 |
+| 16x16x32 | 230 | 229 | 229 |
+| 16x32x32 | 403 | 402 | 402 |
+| 32x32x64 | 1189 | 1188 | 1188 |
+| Aggregate | 2010 | 2005 (-0.25%) | 2005 (-0.25%) |
+
+Weighted useful MAC/cycle changed from 46.105 to 46.220 (+0.25%). Both
+candidates pass only the configured simulation gates; neither meets the 5%
+objective. The original Candidate 001 `REJECT` remains as historical evidence
+for the old test revision. Corrected decisions and raw log hashes are linked
+from the [phase-abort RCA](phase-abort-rca.md). No PPA or signoff claim follows.
+
 ## Candidate 001
 
 - Feature: `MATRIX-CYCLE-001`
@@ -107,23 +145,21 @@ frequency, or power result.
 
 ## Phase-Abort Root Cause and Candidate 002
 
-Candidate 001's seeded failure was traced in baseline and candidate snapshots.
+Candidate 001's initial seeded failure was traced in baseline and candidate snapshots.
 The first divergence is at operation-local cycle 22: baseline enters internal
 `ST_DONE` while Candidate 001 enters `IDLE` and asserts `done`. `abort` is still
 low because the testbench asserts it only after reaching the requested state.
 The observed failure is therefore a testbench phase-reachability assumption,
-not evidence of a DUT abort protocol violation. Candidate 001 remains rejected
-because the required regression fails; no assertion or fault check was
-weakened.
+not evidence of a DUT abort protocol violation. The initial run remains
+recorded as `REJECT` for that regression revision; Candidate 001R2 passed after
+the directed test was moved to an externally observable abort boundary. No
+assertion or fault check was weakened.
 
 A narrower Candidate 002 change skips `ST_NEXT` only after the final tile and
-retains the existing `ST_DONE` path. Three-seed regression passed 18 cases and
-35 fault checks per seed; regression, reference-model, latency, and performance
-Stage Runtime gates all passed. Aggregate cycles changed 2029 to 2020 (-0.44%)
-and weighted useful MAC/cycle changed 45.674 to 45.877 (+0.45%). Workload
-32x32x64 regressed by six cycles, so the result is mixed and below the 5%
-target. See [`phase-abort-rca.md`](phase-abort-rca.md) for traces, patch hash,
-source manifest, and limits.
+retains the existing `ST_DONE` path. Its prior 0.44% result used unaligned
+workload backpressure and is superseded by the aligned corrected replay above.
+See [`phase-abort-rca.md`](phase-abort-rca.md) for traces, patch hashes,
+corrected stage evidence, source manifest, and limits.
 
 ## Controller Scope
 
@@ -131,9 +167,9 @@ The evaluator recognizes an explicit `simulation_performance` mode and
 validates that its plan uses transaction-level behavior, regression/reference/
 latency/performance evidence, and only workload-cycle and MAC/cycle metrics.
 The ASIC PPA mode remains the default and is not automatically downgraded.
-The baseline and rejected candidate both ran through Stage Runtime. Controller
-tests cover metric-only candidate generation and deterministic decisions for
-failed required gates with downstream stages skipped. More candidate strategies
-and a passing performance-improvement case remain untested. Agent-call/token
-telemetry and a comparable manual-workflow baseline are unavailable, so no
-efficiency comparison is claimed.
+The baseline, original failed Candidate 001 attempt, and corrected Candidate
+001R2/002R2 runs used Stage Runtime. Controller tests cover metric-only
+candidate generation and deterministic decisions for failed required gates
+with downstream stages skipped. Agent-call/token telemetry and a comparable
+manual-workflow baseline are unavailable, so no efficiency comparison is
+claimed.

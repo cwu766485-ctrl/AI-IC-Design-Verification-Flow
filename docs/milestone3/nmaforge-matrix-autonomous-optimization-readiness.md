@@ -1,8 +1,10 @@
 # NMAForge Matrix Optimization Readiness
 
-Status: simulation baseline reproduced; Candidate 001 rejected by the required
-phase-abort regression; Candidate 002 passed configured simulation gates with
-a 0.44% aggregate cycle reduction. ASIC PPA remains blocked; no signoff claim.
+Status: simulation baseline reproduced. The initial Candidate 001 rejection
+is preserved for the old testbench revision; corrected Candidate 001R2 and
+Candidate 002R2 passed all configured simulation stages with aligned
+per-workload stimulus and a 0.25% cycle reduction. The 5% goal remains unmet.
+ASIC PPA is STOP; no signoff claim.
 
 ## Integration State
 
@@ -78,6 +80,10 @@ make -C dv/block/compute/matrix/sim matrix-pipeline-benchmark \
   PIPELINE_BENCH_OUT=/tmp/nmaforge_aiicflow_409c3a9_matrix_benchmark
 ```
 
+The table below preserves the initial stimulus-stream measurements. The
+per-workload-aligned comparison in `simulation-performance-campaign.md`
+supersedes these values for candidate evaluation.
+
 The measured RTL simulation cycles and useful MAC/cycle were:
 
 | M×N×K | Cycles | MAC/cycle |
@@ -149,15 +155,14 @@ It rejects ASIC synthesis, STA, power and formal stages. This shares the plan
 and validation contract with the existing evaluator; ASIC requests remain
 strict and are never downgraded automatically.
 
-At NMAForge revision `409c3a9fd647d4f8c4c881c9bfdaf5d93b7076ee`, the three
-seed VCS regression and fixed five-workload benchmark were reproduced in a
-detached temporary worktree. Results, source hashes and command details are in
-[`simulation-performance-campaign.md`](simulation-performance-campaign.md).
-One isolated candidate was generated and rejected after the phase-abort
-regression observed premature completion. No candidate performance improvement
-is claimed. Baseline and candidate evidence were executed through Stage Runtime;
-the candidate's downstream performance stages were correctly skipped after the
-regression failure.
+At NMAForge revision `409c3a9fd647d4f8c4c881c9bfdaf5d93b7076ee`, the original
+three-seed regression and five-workload benchmark were reproduced in a detached
+worktree. The original Candidate 001 `REJECT` remains historical for that
+testbench revision. Corrected Candidate 001R2 and Candidate 002R2 passed all
+four configured Stage Runtime stages after the abort test moved to the
+final-write-pending boundary. Their aligned aggregate changed from 2010 to 2005
+cycles (-0.25%), below the 5% target. Results, source hashes, decisions, and
+limits are in [`simulation-performance-campaign.md`](simulation-performance-campaign.md).
 
 ## Optimization Components
 
@@ -180,9 +185,10 @@ decision layer around the existing evaluator and Stage Runtime:
   calls and token use remain `null` unless an external telemetry source is
   supplied; no efficiency comparison is claimed.
 
-The simulation-performance mode has now evaluated Candidate 002 through the
-shared Stage Runtime using a reproducible behavioral baseline. This does not
-unblock ASIC optimization: without an approved library/corner, reviewed SDC,
+The simulation-performance mode has evaluated Candidate 001R2 and Candidate
+002R2 through the shared Stage Runtime using a reproducible behavioral
+baseline. The 0.25% cycle change does not meet the campaign target and does not
+unblock ASIC optimization. Without an approved library/corner, reviewed SDC,
 formal/equivalence policy, and target-specific synthesis/STA setup, the ASIC
 controller must still return `STOP`. Once those inputs are supplied, no more
 than three isolated ASIC candidates can be evaluated through `rtl_ppa.py`.

@@ -1,8 +1,10 @@
 # Milestone 3: RTL/PPA Optimization Framework
 
-The Matrix Candidate 001 phase-abort root-cause analysis, Candidate 002 patch,
-and qualified regression/benchmark evidence are documented in
-[`phase-abort-rca.md`](phase-abort-rca.md).
+The Matrix phase-abort RCA preserves Candidate 001's original regression
+failure, records the corrected test contract and negative control, and reports
+the aligned Candidate 001R2/002R2 simulation results in
+[`phase-abort-rca.md`](phase-abort-rca.md). The 0.25% cycle change is below the
+5% objective; no ASIC PPA or signoff is claimed.
 
 This change adds `skills/rtl-ppa-optimization` and an adapter-driven evaluator
 for measured baselines and bounded RTL candidate patches. It does not replace
@@ -14,9 +16,9 @@ accuracy measurements.
 
 | Capability | Framework state | NMAForge Matrix evidence state |
 |---|---|---|
-| Source revision and candidate patch records | Implemented; isolated Git snapshot, compiled-source patch allowlist, plan/source/asset/seed/tool compatibility, fractional per-campaign and cumulative budgets | Candidate 002 source, patch, seed, and tool provenance captured in a simulation-performance campaign; no ASIC PPA candidate evaluated |
-| Stage artifact and metric evidence | Implemented checks for supported adapter identity, nonempty SHA-256 artifacts, and metric-to-artifact/parser provenance | Regression, reference-model, latency, and performance artifacts captured for Candidate 002 |
-| Regression gate | Implemented as a required ordered stage | Shared Stage Runtime regression/reference stages passed on three seeds for Candidate 002; Candidate 001 remains rejected |
+| Source revision and candidate patch records | Implemented; isolated Git snapshot, compiled-source patch allowlist, plan/source/asset/seed/tool compatibility, fractional per-campaign and cumulative budgets | Candidate 001R2/002R2 patches, source hashes, seeds, and tools recorded; no ASIC PPA candidate evaluated |
+| Stage artifact and metric evidence | Implemented checks for supported adapter identity, nonempty SHA-256 artifacts, and metric-to-artifact/parser provenance | Regression, reference-model, latency, and performance stages passed for both corrected simulation candidates |
+| Regression gate | Implemented as a required ordered stage | Three seeds passed for Candidate 001R2/002R2; original Candidate 001 failure remains historical for the old testbench |
 | Formal equivalence | Candidate `formal` stage is mandatory for cycle-equivalent plans | No formal campaign; simulation mode uses transaction-level behavior and the existing testbench reference model |
 | Synthesis cell area | Metric gate and report-artifact requirement | No measured area report captured |
 | Setup WNS | Metric gate and report-artifact requirement | No measured STA report captured |
@@ -47,13 +49,13 @@ worktree contained untracked `novas.conf` and `novas.rc`; both were preserved,
 and simulation candidates ran only in isolated snapshots. The example ASIC plan
 still has placeholder library, SDC, and adapter inputs.
 
-Candidate 001 was rejected after the phase-abort test waited for internal state
-`ST_DONE` after the candidate had already completed; no abort was sampled.
-Candidate 002 retains the `ST_DONE`/abort path and passed all configured
-simulation gates with a 0.44% aggregate cycle reduction, below the 5% target.
-Its patch and evidence are documented in
-[`phase-abort-rca.md`](phase-abort-rca.md). No change was applied to the
-original NMAForge worktree, and this simulation result is not ASIC PPA or
+Candidate 001's old `REJECT` records a testbench reachability failure: abort
+was never sampled. The corrected test aborts while the final output line is
+valid and stalled, and its retained checks kill an abort-ignored mutation.
+Candidate 001R2 and Candidate 002R2 passed the corrected three-seed regression
+and four Stage Runtime simulation gates. Aligned workload cycles changed from
+2010 to 2005 (-0.25%), below the 5% target. No change was applied to the
+original NMAForge worktree; this remains simulation evidence, not ASIC PPA or
 signoff evidence.
 
 ## Evaluation behavior
