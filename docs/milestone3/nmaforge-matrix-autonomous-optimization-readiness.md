@@ -36,6 +36,12 @@ branch `feat/shape-adaptive-gemv-v2`. Its original worktree had two unrelated
 untracked files (`novas.conf`, `novas.rc`); they were preserved. No RTL or
 tracked NMAForge file was modified.
 
+The isolated Matrix abort-test and evidence branch is available for review in
+[NMAForge PR #10](https://github.com/cwu766485-ctrl/NMAForge/pull/10), targeting
+`feat/shape-adaptive-gemv-v2`. GitHub reports no Actions checks for that branch;
+the required VCS regression was run locally and its logs are archived with
+SHA-256 values in the PR branch.
+
 The target is `ai_tensor_matrix_core`. The existing VCS compile order is:
 
 1. `rtl/compute/matrix/ai_tensor_matrix_datapath.v`
