@@ -20,7 +20,8 @@ from pathlib import Path
 EDA_SCRIPTS = Path(__file__).resolve().parents[2] / "eda-tool-engineering" / "scripts"
 if str(EDA_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(EDA_SCRIPTS))
-from stage_runtime import make_stage_input, run_process, save_json, validate_stage_result
+from eda_runtime import execute_plan
+from stage_runtime import save_json
 
 
 STATUSES = {"PASS", "FAIL", "ERROR", "BLOCKED", "NOT_RUN", "SKIPPED"}
@@ -750,6 +751,121 @@ def run_stage(stage, project_root, run_dir, candidate_root, source_manifest_path
     return record
 
 
+def build_runtime_stages(stages, mode, project_root, run_dir, candidate_root,
+                         source_manifest_path, seed, source_inputs):
+    runtime_stages = []
+    command_ids, result_ids = {}, {}
+    previous_result = None
+    original_root = str(Path(project_root).resolve())
+    candidate_root = Path(candidate_root).resolve()
+    run_dir = Path(run_dir).resolve()
+    source_inputs = [Path(path).resolve() for path in source_inputs]
+    for stage in stages:
+        stage_id = stage["id"]
+        stage_dir = run_dir / "stages" / stage_id
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        cwd = ensure_within(candidate_root / stage.get("cwd", "."), candidate_root, "stage cwd")
+        mapping = {"{project_root}": str(candidate_root), "{source_root}": str(candidate_root),
+                   "{candidate_root}": str(candidate_root), "{run_dir}": str(stage_dir),
+                   "{manifest}": str(source_manifest_path), "{seed}": str(seed)}
+        argv = [apply_placeholders(value, mapping) for value in stage["argv"]]
+        if any(original_root in value for value in argv):
+            raise BlockedError("stage command contains the original project path; use snapshot placeholders")
+        inherited_path_vars = [key for key, value in os.environ.items()
+                               if key != "PWD" and original_root in value]
+        if inherited_path_vars:
+            raise BlockedError("inherited environment references the original project path: " +
+                               ", ".join(sorted(inherited_path_vars)))
+        env = {"RTL_PPA_PROJECT_ROOT": str(candidate_root),
+               "RTL_PPA_SOURCE_ROOT": str(candidate_root),
+               "RTL_PPA_RUN_DIR": str(stage_dir),
+               "RTL_PPA_SOURCE_MANIFEST": str(source_manifest_path),
+               "RTL_PPA_MODE": mode, "RTL_PPA_CAMPAIGN_ID": run_dir.name, "PWD": str(cwd),
+               "SEED": str(seed)}
+        result_json = stage_artifact_path(stage["result_json"], mapping, stage_dir, "stage result JSON")
+        expected = [stage_artifact_path(value, mapping, stage_dir, "expected artifact")
+                    for value in stage.get("expected_artifacts", [])]
+        expected_with_result = expected + [result_json]
+        command_id = stage_id
+        result_id = "ppa_result_" + stage_id
+        dependencies = [previous_result] if previous_result else []
+        cache_options = dict(stage.get("cache_options", {}))
+        cache_options.update(mode=mode, seed=seed, campaign_id=run_dir.name)
+        cache_path_map = {str(candidate_root): "$SOURCE"}
+        runtime_stages.append({
+            "id": command_id, "name": command_id, "kind": "command",
+            "stage_kind": stage.get("kind", "ppa"), "adapter_id": stage["adapter_id"],
+            "adapter_supported": stage.get("adapter_supported", True), "command": argv,
+            "cwd": str(cwd), "timeout": float(stage.get("timeout_sec", 1800)),
+            "seed": seed, "environment": env, "log_name": str(stage_dir / "command.log"),
+            "pass_patterns": stage.get("pass_patterns", []),
+            "fail_patterns": stage.get("fail_patterns", []),
+            "artifacts": [str(path) for path in expected_with_result],
+            "cache_inputs": [str(path) for path in source_inputs],
+            "cache_options": cache_options, "cache_path_map": cache_path_map,
+            "requires": dependencies, "dependencies": dependencies,
+        })
+        runtime_stages.append({
+            "id": result_id, "name": result_id, "kind": "ppa_result",
+            "stage_kind": "result_validation", "adapter_id": "project.ppa.result-validation.v1",
+            "result_json": str(result_json), "artifact_root": str(stage_dir),
+            "expected_adapter_id": stage["adapter_id"],
+            "expected_artifacts": [str(path) for path in expected],
+            "cache_options": {"adapter_id": stage["adapter_id"]},
+            "cache_path_map": cache_path_map,
+            "requires": [command_id], "dependencies": [command_id],
+        })
+        command_ids[stage_id], result_ids[stage_id] = command_id, result_id
+        previous_result = result_id
+    return runtime_stages, command_ids, result_ids
+
+
+def legacy_stage_records(stages, records, mode, run_dir, seed):
+    by_id = {record.get("id"): record for record in records}
+    converted = []
+    for stage in stages:
+        command_record = by_id.get(stage["id"], {})
+        result_record = by_id.get("ppa_result_" + stage["id"], {})
+        result_status = result_record.get("status")
+        status = result_status if result_status not in (None, "SKIPPED", "NOT_RUN") else command_record.get("status", "NOT_RUN")
+        stage_dir = Path(run_dir) / "stages" / stage["id"]
+        for key, filename in (("stage_input", "runtime-stage-input.v1.json"),
+                              ("stage_result", "runtime-stage-result.v1.json")):
+            contract_path = command_record.get(key)
+            if contract_path and Path(contract_path).is_file():
+                shutil.copy2(contract_path, stage_dir / filename)
+        artifacts = result_record.get("artifacts", [])
+        if result_record.get("result_json"):
+            result_path = Path(result_record["result_json"])
+            if result_path.is_file():
+                artifacts = list(artifacts) + [{"path": str(result_path), "kind": "file",
+                                                "size_bytes": result_path.stat().st_size,
+                                                "sha256": sha256(result_path)}]
+        reason = result_record.get("reason") or command_record.get("reason")
+        converted.append({
+            "stage": stage["id"], "campaign_mode": mode, "campaign_id": Path(run_dir).name,
+            "status": status, "return_code": command_record.get("return_code"),
+            "elapsed_sec": round(float(command_record.get("elapsed_sec", 0)) +
+                                  float(result_record.get("elapsed_sec", 0)), 6),
+            "command": command_record.get("command"), "cwd": command_record.get("cwd"),
+            "log": command_record.get("log"), "reason": reason, "seed": seed,
+            "runtime_status": command_record.get("status"),
+            "runtime_error_class": command_record.get("error_class"),
+            "runtime_stage_result": command_record.get("stage_result"),
+            "runtime_stage_result_sha256": command_record.get("stage_result_sha256"),
+            "runtime_stage_input": command_record.get("stage_input"),
+            "runtime_stage_input_sha256": command_record.get("stage_input_sha256"),
+            "result_json": result_record.get("result_json"),
+            "metrics": result_record.get("metrics", {}),
+            "metric_provenance": result_record.get("metric_provenance", {}),
+            "tool_versions": result_record.get("tool_versions", {}),
+            "adapter_id": result_record.get("adapter_id", stage.get("adapter_id")),
+            "adapter_supported": result_record.get("adapter_supported", stage.get("adapter_supported", True)),
+            "artifact_manifest": artifacts,
+        })
+    return converted
+
+
 def ensure_within(path, root, label):
     path = Path(path).resolve()
     root = Path(root).resolve()
@@ -1069,36 +1185,37 @@ def _execute_campaign_locked(args, mode):
     absent = sorted(required - selected_ids)
     if absent:
         raise PlanError("required stages are disabled for " + mode + ": " + ", ".join(absent))
-    for stage in selected:
-        campaign_elapsed = time.monotonic() - started_all
-        remaining = remaining_runtime(per_campaign_limit, total_limit,
-                                       campaign_elapsed, prior_runtime)
-        if remaining <= 0:
-            records.append({"stage": stage["id"], "status": "BLOCKED", "reason": "campaign runtime budget exhausted"})
-            evidence["status"] = "BLOCKED"
-            break
-        bounded_stage = dict(stage)
-        bounded_stage["timeout_sec"] = min(float(stage.get("timeout_sec", 1800)), remaining)
-        bounded_stage["remaining_budget_sec"] = remaining
-        try:
-            record = run_stage(bounded_stage, root, output, snapshot, source_manifest,
-                               effective_seed, mode)
-        except BlockedError as exc:
-            record = {"stage": stage["id"], "campaign_mode": mode, "campaign_id": run_id,
-                      "status": "BLOCKED", "return_code": None,
-                      "reason": str(exc), "seed": effective_seed}
-        except OSError as exc:
-            record = {"stage": stage["id"], "campaign_mode": mode, "campaign_id": run_id,
-                      "status": "ERROR", "return_code": None,
-                      "reason": str(exc), "seed": effective_seed}
-        except (ValueError, KeyError, TypeError) as exc:
-            record = {"stage": stage["id"], "campaign_mode": mode, "campaign_id": run_id,
-                      "status": "ERROR", "return_code": None,
-                      "reason": str(exc), "seed": effective_seed}
-        records.append(record)
-        if record["status"] != "PASS":
-            evidence["status"] = record["status"]
-            break
+    campaign_elapsed = time.monotonic() - campaign_monotonic
+    remaining = remaining_runtime(per_campaign_limit, total_limit, campaign_elapsed, prior_runtime)
+    runtime_stages, _, _ = build_runtime_stages(
+        selected, mode, root, output, snapshot, source_manifest, effective_seed,
+        [source_manifest] + [snapshot / name for name in source_hashes] +
+        [snapshot / item["target"] for item in plan.get("read_only_assets", [])])
+    project_record = {
+        "name": plan["project"], "source_revision": state["sha"],
+        "source_tree_sha256": hashlib.sha256(json.dumps(source_hashes, sort_keys=True).encode()).hexdigest(),
+        "design_top": plan["design_top"], "testbench_top": plan["testbench_top"],
+        "ordered_sources": list(plan["rtl_sources"]),
+        "filelists": [], "includes": [], "defines": {},
+        "constraints": [{"path": item["target"], "sha256": asset_hashes[item["target"]]}
+                        for item in plan.get("read_only_assets", [])
+                        if item["target"].lower().endswith(".sdc")],
+        "libraries": [{"path": item["target"], "sha256": asset_hashes[item["target"]]}
+                      for item in plan.get("read_only_assets", [])
+                      if Path(item["target"]).suffix.lower() in (".db", ".lib", ".ndm", ".lef")],
+    }
+    runtime_root = runs_root / ".shared-stage-runtime"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    runtime_records = execute_plan(runtime_stages, output, True, root=runtime_root, run_id=run_id,
+                                   project=project_record,
+                                   cache_inputs=[source_manifest] +
+                                       [snapshot / name for name in source_hashes] +
+                                       [snapshot / item["target"] for item in plan.get("read_only_assets", [])],
+                                   budget_seconds=remaining)
+    records = legacy_stage_records(selected, runtime_records, mode, output, effective_seed)
+    failed = next((record for record in records if record["status"] != "PASS"), None)
+    if failed:
+        evidence["status"] = failed["status"]
     passed_ids = {x["stage"] for x in records if x["status"] == "PASS"}
     for stage in selected:
         if stage["id"] not in {x["stage"] for x in records}:

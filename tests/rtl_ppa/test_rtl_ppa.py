@@ -42,7 +42,8 @@ result = {
     "status": "PASS",
     "adapter_id": "test." + stage + ".v1",
     "adapter_supported": campaign != "unsupported_adapter",
-    "tool_versions": {"fake-tool": "v2" if campaign == "candidate_tool_v2" else "v1"},
+    "tool_versions": ({"fake-tool": 7} if campaign == "invalid_tool_version" else
+                       {"fake-tool": "v2" if campaign == "candidate_tool_v2" else "v1"}),
     "metrics": {"cell_area": area} if stage == "synthesis" else {},
     "metric_provenance": ({"cell_area": {"artifact": "evidence.txt", "parser_id": "fake-area", "parser_version": "2" if campaign == "candidate_parser_v2" else "1"}}
                           if stage == "synthesis" and campaign != "missing_metric_provenance" else {}),
@@ -220,6 +221,13 @@ def test_successful_baseline_candidate_and_snapshot_isolation(project, tmp_path)
     assert stage["artifact_manifest"]
     assert all(item["sha256"] and item["size_bytes"] > 0
                for item in stage["artifact_manifest"])
+    runtime_checkpoint = json_doc(runs / "area_candidate/checkpoint.json")
+    assert {item["id"] for item in runtime_checkpoint["stages"]} == {
+        "synthesis", "ppa_result_synthesis", "formal", "ppa_result_formal"}
+    assert all(item["status"] == "PASS" for item in runtime_checkpoint["stages"])
+    shared_cache = runs / ".shared-stage-runtime/runs/.cache/stages"
+    assert list(shared_cache.glob("*.json"))
+    assert (runs / "area_candidate/stages/synthesis/runtime-stage-input.v1.json").is_file()
     assert (project / "rtl/top.sv").read_bytes() == original
     source_manifest = json_doc(runs / "area_candidate/source_manifest.json")
     assert source_manifest["rtl_sources"] == ["rtl/top.sv"]
@@ -246,6 +254,7 @@ def test_failed_late_candidate_stage_never_accepts_early_metric(project, tmp_pat
     ("symlink_artifact", "BLOCKED"),
     ("unsupported_adapter", "BLOCKED"),
     ("missing_metric_provenance", "BLOCKED"),
+    ("invalid_tool_version", "BLOCKED"),
     ("nonfinite_metric", "ERROR"),
 ])
 def test_missing_artifact_unsupported_adapter_and_exit_code(project, tmp_path,

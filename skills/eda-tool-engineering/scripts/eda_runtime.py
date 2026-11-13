@@ -2,6 +2,7 @@
 import hashlib
 import html
 import json
+import math
 import os
 import re
 import shutil
@@ -590,6 +591,90 @@ def run_stage(stage, run_dir, execute):
         else:
             record["status"] = "BLOCKED"
             record["error_class"] = "RESULT_MARKER_MISSING"
+    elif stage.get("kind") == "ppa_result":
+        result_file = Path(stage["result_json"]).resolve()
+        artifact_root = Path(stage.get("artifact_root", result_file.parent)).resolve()
+        try:
+            result_file.relative_to(Path(run_dir).resolve())
+            if result_file.is_symlink() or not result_file.is_file():
+                raise StageContractError("stage result JSON is missing or is a symlink")
+            data = json.loads(result_file.read_text())
+            if not isinstance(data, dict):
+                raise StageContractError("stage result JSON must be an object")
+            if data.get("status") not in STATUSES:
+                raise StageContractError("stage result has no recognized status")
+            if data.get("status") != "PASS":
+                record.update(status=data["status"], error_class="ADAPTER_RESULT_NOT_PASS",
+                              reason=data.get("reason") or "stage result was not PASS")
+            elif data.get("adapter_id") != stage.get("expected_adapter_id"):
+                record.update(status="BLOCKED", error_class="ADAPTER_IDENTITY_MISMATCH",
+                              reason="stage adapter identity is missing or does not match the plan")
+            elif data.get("adapter_supported") is not True:
+                record.update(status="BLOCKED", error_class="ADAPTER_UNSUPPORTED",
+                              reason="stage adapter reports unsupported functionality")
+            elif (not isinstance(data.get("tool_versions"), dict) or not data["tool_versions"] or
+                  not all(isinstance(key, str) and key and isinstance(value, str) and value
+                          for key, value in data["tool_versions"].items())):
+                record.update(status="BLOCKED", error_class="TOOL_VERSION_MISSING",
+                              reason="stage tool_versions provenance is missing")
+            elif not isinstance(data.get("metrics", {}), dict):
+                record.update(status="ERROR", error_class="METRICS_INVALID",
+                              reason="stage metrics must be a mapping")
+            elif any(not isinstance(value, (int, float)) or isinstance(value, bool) or
+                     not math.isfinite(float(value))
+                     for value in data.get("metrics", {}).values()):
+                record.update(status="ERROR", error_class="METRICS_INVALID",
+                              reason="stage metric values must be finite numbers")
+            elif not isinstance(data.get("artifacts", []), list) or not all(
+                    isinstance(value, str) for value in data.get("artifacts", [])):
+                record.update(status="ERROR", error_class="ARTIFACTS_INVALID",
+                              reason="stage artifacts must be a string list")
+            else:
+                artifacts, artifact_paths, missing = [], set(), []
+                expected = list(stage.get("expected_artifacts", [])) + list(data.get("artifacts", []))
+                for value in expected:
+                    target = Path(value)
+                    if not target.is_absolute():
+                        target = artifact_root / target
+                    try:
+                        target.resolve().relative_to(artifact_root)
+                        if not _artifact_present(target):
+                            missing.append(str(value) + " (missing or empty)")
+                            continue
+                        artifact_paths.add(target.resolve())
+                        artifacts.append(artifact_record(target))
+                    except (ValueError, OSError, StageContractError) as exc:
+                        missing.append(str(value) + " (" + str(exc) + ")")
+                provenance = data.get("metric_provenance", {})
+                if not isinstance(provenance, dict):
+                    missing.append("metric_provenance must be a mapping")
+                else:
+                    for metric_name in data.get("metrics", {}):
+                        item = provenance.get(metric_name)
+                        if (not isinstance(item, dict) or not all(isinstance(item.get(key), str) and item[key]
+                                for key in ("artifact", "parser_id", "parser_version"))):
+                            missing.append(metric_name + " metric provenance is missing")
+                            continue
+                        path = Path(item["artifact"])
+                        if not path.is_absolute():
+                            path = artifact_root / path
+                        try:
+                            path.resolve().relative_to(artifact_root)
+                        except ValueError:
+                            missing.append(metric_name + " provenance escapes the stage artifact root")
+                            continue
+                        if path.resolve() not in artifact_paths:
+                            missing.append(metric_name + " provenance does not name a reported artifact")
+                if missing:
+                    record.update(status="BLOCKED", error_class="ARTIFACT_PROVENANCE_INVALID",
+                                  reason="required artifacts missing or invalid: " + ", ".join(missing))
+                else:
+                    record.update(status="PASS", metrics=data.get("metrics", {}),
+                                  metric_provenance=provenance, tool_versions=data["tool_versions"],
+                                  adapter_id=data["adapter_id"], adapter_supported=data["adapter_supported"],
+                                  artifacts=artifacts, result_json=str(result_file))
+        except (OSError, ValueError, KeyError, TypeError, StageContractError) as exc:
+            record.update(status="ERROR", error_class="RESULT_JSON_INVALID", reason=str(exc))
     elif stage.get("kind") == "coverage_summary":
         report_dir = Path(stage["report_dir"])
         dashboard = report_dir / "dashboard.html"
@@ -908,7 +993,9 @@ def _canonicalize_stages(stages):
     aliases = {}
     for stage in stages:
         name = stage.get("name", "")
-        if name == "compile":
+        if stage.get("id"):
+            sid = stage["id"]
+        elif name == "compile":
             sid = "vcs_compile"
         elif name.startswith("simulate_"):
             sid = "vcs_" + name
@@ -955,11 +1042,17 @@ def _path_fingerprint(paths):
 
 def _normalized_command(stage, run_dir):
     root = str(Path(run_dir).resolve())
+    replacements = [(str(source), str(target)) for source, target in
+                    stage.get("cache_path_map", {}).items()]
+    replacements.sort(key=lambda item: len(item[0]), reverse=True)
+    def normalize(value):
+        value = str(value).replace(root, "$RUN")
+        for source, target in replacements:
+            value = value.replace(source, target)
+        return value
     result = []
     for value in stage.get("command", []):
-        value = str(value)
-        # Normalize run-local output paths, preserving source/PDK paths.
-        result.append(value.replace(root, "$RUN"))
+        result.append(normalize(value))
     return result
 
 
@@ -1000,6 +1093,8 @@ def _cache_key(stage, run_dir, cache_inputs, dependency_records):
         "adapter_supported": stage.get("adapter_supported", True),
         "adapter_version": stage.get("adapter_version", "1"),
         "stage_kind": stage.get("stage_kind"), "command": _normalized_command(stage, run_dir),
+        "cwd": _normalized_command({"command": [stage.get("cwd", "")],
+                                    "cache_path_map": stage.get("cache_path_map", {})}, run_dir)[0],
         "timeout": stage.get("timeout"), "seed": stage.get("seed"),
         "test_name": stage.get("test_name"), "regression_test": stage.get("regression_test"),
         "cache_options": stage.get("cache_options", {}),
