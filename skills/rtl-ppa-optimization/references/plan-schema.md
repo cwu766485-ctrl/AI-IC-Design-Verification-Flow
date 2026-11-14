@@ -9,6 +9,7 @@ shell command strings.
 ```yaml
 schema_version: 1
 project: accelerator-block
+optimization_mode: asic_ppa # or simulation_performance
 design_top: accelerator_core
 testbench_top: tb_accelerator_core
 rtl_scope:
@@ -46,6 +47,16 @@ introduce RTL absent from the compile order. All stage IDs listed under `require
 exist and be enabled for that mode.
 Required stages and required metric source stages must declare at least one
 `expected_artifacts` path so missing reports cannot be silently ignored.
+
+`optimization_mode` defaults to `asic_ppa`. The separate
+`simulation_performance` mode requires a `transaction_level` behavior contract,
+`regression`, `reference_model`, `latency_gate`, and `performance` stages for
+both baseline and candidate, and exactly the `workload_cycles` and
+`macs_per_cycle` metrics from the performance stage. It rejects formal,
+synthesis, STA, and power stages. This mode uses the same snapshot, stage,
+cache, budget, artifact, and comparison runtime, but its results make no ASIC
+area, timing, frequency, or power claim. Selecting this mode is explicit; an
+ASIC PPA plan is never rewritten or downgraded automatically.
 
 `behavior_contract` is either `cycle_equivalent` or `transaction_level`. A
 cycle-equivalent candidate additionally requires a candidate stage named

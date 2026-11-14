@@ -174,6 +174,38 @@ def test_valid_and_invalid_configuration_and_top_identification(project):
     assert any("file is missing" in error for error in rtl_ppa.validate_plan(invalid, project))
 
 
+def test_simulation_performance_contract_requires_its_own_evidence_and_rejects_asic_metrics():
+    plan = {
+        "optimization_mode": "simulation_performance",
+        "behavior_contract": "transaction_level",
+        "required_stages": {
+            "baseline": ["regression", "reference_model", "latency_gate", "performance"],
+            "candidate": ["regression", "reference_model", "latency_gate", "performance"],
+        },
+        "metrics": {
+            "workload_cycles": {"source_stage": "performance"},
+            "macs_per_cycle": {"source_stage": "performance"},
+        },
+    }
+    stages = {"regression", "reference_model", "latency_gate", "performance"}
+    assert rtl_ppa.validate_optimization_mode(plan, stages) == []
+
+    invalid = json.loads(json.dumps(plan))
+    invalid["metrics"]["setup_wns"] = {"source_stage": "performance"}
+    invalid["required_stages"]["candidate"].remove("reference_model")
+    errors = rtl_ppa.validate_optimization_mode(invalid, stages | {"sta"})
+    assert any("stages must be exactly" in error for error in errors)
+    assert any("cannot include non-simulation stages" in error for error in errors)
+    assert any("metrics must be workload_cycles" in error for error in errors)
+
+
+def test_asic_mode_does_not_silently_become_simulation_performance():
+    plan = {"optimization_mode": "simulation_only"}
+    assert rtl_ppa.validate_optimization_mode(plan, set()) == [
+        "optimization_mode must be asic_ppa or simulation_performance"
+    ]
+
+
 def test_yaml_configuration_parser_accepts_and_rejects_yaml(tmp_path):
     valid = tmp_path / "valid.yaml"
     write(valid, "schema_version: 1\nitems:\n  - rtl/top.sv\n")

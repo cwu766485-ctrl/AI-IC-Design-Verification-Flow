@@ -107,3 +107,19 @@ The framework is not a synthesis, STA, power, formal, or regression adapter.
 An adapter that omits required support declaration, tool version, metric, or
 nonempty report cannot produce a passing stage. Adapter JSON remains a trust
 boundary: fake-adapter CI verifies runner semantics only, not Synopsys behavior.
+
+## Bounded optimization controller
+
+[`scripts/autonomous_optimizer.py`](scripts/autonomous_optimizer.py) contains
+small evidence-policy components that consume `rtl_ppa.py` reports; it does not
+launch a second scheduler or mutate RTL. `QoRAnalyzer` requires passing stages,
+metric provenance, and structured timing/area hotspot evidence. `CandidateGenerator`
+binds a proposed change to a source revision, patch hash, hotspot, approved
+scope, risks, expected impact, and required validation. `OptimizationController`
+requires every declared candidate stage and remaining candidate/runtime budget
+before it can return `ACCEPT`. Missing mandatory evidence returns `STOP`.
+
+The NMAForge Matrix readiness record is
+[`docs/milestone3/nmaforge-matrix-autonomous-optimization-readiness.md`](../../docs/milestone3/nmaforge-matrix-autonomous-optimization-readiness.md).
+Its ASIC PPA baseline remains blocked until approved target libraries and SDC,
+technology setup, and a candidate equivalence policy are available.

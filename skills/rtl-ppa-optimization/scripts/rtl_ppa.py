@@ -183,6 +183,46 @@ def required_stage_ids(plan, candidate=False):
     return list(dict.fromkeys(required))
 
 
+def validate_optimization_mode(plan, stage_ids):
+    mode = plan.get("optimization_mode", "asic_ppa")
+    if mode == "asic_ppa":
+        return []
+    if mode != "simulation_performance":
+        return ["optimization_mode must be asic_ppa or simulation_performance"]
+
+    errors = []
+    behavior_cfg = plan.get("behavior_contract", "cycle_equivalent")
+    behavior = behavior_cfg.get("type") if isinstance(behavior_cfg, dict) else behavior_cfg
+    if behavior != "transaction_level":
+        errors.append("simulation_performance requires a transaction_level behavior contract")
+
+    required = plan.get("required_stages", {})
+    expected = {"regression", "reference_model", "latency_gate", "performance"}
+    if not isinstance(required, dict):
+        errors.append("simulation_performance requires baseline and candidate stages")
+    else:
+        for run_mode in ("baseline", "candidate"):
+            configured = required.get(run_mode, [])
+            if (not isinstance(configured, list) or
+                    not all(isinstance(item, str) for item in configured) or
+                    set(configured) != expected):
+                errors.append("simulation_performance " + run_mode +
+                              " stages must be exactly regression, reference_model, latency_gate, and performance")
+
+    extra_stages = set(stage_ids) - expected
+    if extra_stages:
+        errors.append("simulation_performance cannot include non-simulation stages: " +
+                      ", ".join(sorted(extra_stages)))
+    metrics = plan.get("metrics", {})
+    allowed_metrics = {"workload_cycles", "macs_per_cycle"}
+    if not isinstance(metrics, dict) or set(metrics) != allowed_metrics:
+        errors.append("simulation_performance metrics must be workload_cycles and macs_per_cycle only")
+    elif any(rule.get("source_stage") != "performance" for rule in metrics.values()
+             if isinstance(rule, dict)):
+        errors.append("simulation_performance metrics must come from the performance stage")
+    return errors
+
+
 def validate_plan(plan, root):
     errors = []
     if plan.get("schema_version") != 1:
@@ -335,6 +375,7 @@ def validate_plan(plan, root):
         artifacts = matching.get("expected_artifacts", [])
         if not isinstance(artifacts, list) or not artifacts:
             errors.append("required evidence stage " + sid + " must declare expected_artifacts")
+    errors.extend(validate_optimization_mode(plan, stage_ids))
     budget = plan.get("budget", {})
     if not isinstance(budget, dict):
         errors.append("budget must be a mapping")
