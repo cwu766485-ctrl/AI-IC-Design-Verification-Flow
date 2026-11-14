@@ -12,8 +12,72 @@ SEEDS = (20261021, 20261022, 20261023)
 WORKLOADS = ((4, 4, 32), (8, 8, 32), (16, 16, 32),
              (16, 32, 32), (32, 32, 64))
 PASS_RE = re.compile(r"MATRIX_CORE_RANDOM_PASS .* seed=(\d+)")
-CASE_RE = re.compile(r"MATRIX_CORE_CASE_PASS id=10\d+ .* cycles=(\d+) .* macs_per_cycle=([0-9.]+)")
+CASE_RE = re.compile(r"MATRIX_CORE_CASE_PASS id=(10\d+) .* cycles=(\d+) .* macs_per_cycle=([0-9.]+)")
+PROFILE_RE = re.compile(r"^MATRIX_CORE_PROFILE (.+)$", re.MULTILINE)
 TOOL_RE = re.compile(r"Compiler version (V-[^; ]+)")
+PREFETCH_WAIT_BUCKETS = (
+    "prefetch_wait_denial", "prefetch_wait_fifo_full",
+    "prefetch_wait_request_grant", "prefetch_wait_outstanding_drain",
+    "prefetch_wait_handoff_ready", "prefetch_wait_no_request",
+)
+PROFILE_TOTAL_FIELDS = (
+    "prefetch_wait", *PREFETCH_WAIT_BUCKETS, "arbiter_stall", "banked_denial",
+    "line_denial", "scalar_denial", "write", "write_productive",
+    "writeback_stall", "write_protection_error",
+)
+PROFILE_STATE_FIELDS = (
+    "a_req", "a_wait", "b_req", "b_wait", "bias_req", "bias_wait",
+    "prep_mac", "mac", "write", "next", "done", "error",
+    "error_drain", "prefetch_wait",
+)
+REQUIRED_PROFILE_FIELDS = set(PROFILE_TOTAL_FIELDS) | set(PROFILE_STATE_FIELDS) | {
+    "id", "total", "writeback_wait", "response_wait", "outstanding_highwater",
+    "fifo_full", "prefetch_a_req", "prefetch_a_drain", "prefetch_b_req",
+    "prefetch_b_drain", "prefetch_overlap", "prefetch_completed",
+    "a_tile_cache_hits", "max_outstanding",
+}
+
+
+def parse_profiles(log, case_cycles):
+    profiles = {}
+    for line in PROFILE_RE.findall(log):
+        profile = {}
+        for field in line.split():
+            if "=" not in field:
+                raise ValueError("malformed Matrix profile field: " + field)
+            key, value = field.split("=", 1)
+            try:
+                profile[key] = int(value)
+            except ValueError as exc:
+                raise ValueError("non-integer Matrix profile field: " + key) from exc
+        if "id" not in profile or profile["id"] in profiles:
+            raise ValueError("missing or duplicate Matrix profile id")
+        missing = REQUIRED_PROFILE_FIELDS - set(profile)
+        if missing:
+            raise ValueError("Matrix profile missing fields: " + ", ".join(sorted(missing)))
+        profiles[profile["id"]] = profile
+
+    if set(profiles) != set(case_cycles):
+        raise ValueError("Matrix profile IDs do not match benchmark cases")
+    for case_id, cycles in case_cycles.items():
+        profile = profiles[case_id]
+        if profile.get("total") != cycles:
+            raise ValueError("Matrix profile total does not match workload cycles for id {}".format(case_id))
+        if sum(profile[field] for field in PROFILE_STATE_FIELDS) != cycles:
+            raise ValueError("Matrix state-cycle attribution does not balance for id {}".format(case_id))
+        if profile.get("prefetch_wait") != sum(profile.get(k, -1) for k in PREFETCH_WAIT_BUCKETS):
+            raise ValueError("Matrix prefetch-wait attribution does not balance for id {}".format(case_id))
+        if profile.get("write") != sum(profile.get(k, -1) for k in (
+                "write_productive", "writeback_stall", "write_protection_error")):
+            raise ValueError("Matrix write attribution does not balance for id {}".format(case_id))
+        if profile.get("writeback_wait") != profile.get("writeback_stall"):
+            raise ValueError("legacy and split writeback-stall counters disagree for id {}".format(case_id))
+    return [profiles[case_id] for case_id in sorted(profiles)]
+
+
+def sum_profile_fields(profiles):
+    return {field: sum(profile.get(field, 0) for profile in profiles)
+            for field in PROFILE_TOTAL_FIELDS}
 
 
 def run_make(source_root, run_dir, target, variables):
@@ -66,19 +130,30 @@ def main(argv):
             "A_TILE_CACHE_ENABLE": "1",
             "PIPELINE_BENCH_OUT": str(out),
         })
-        cases = [(int(cycles), float(rate)) for cycles, rate in CASE_RE.findall(log)]
+        cases = [(int(case_id), int(cycles), float(rate))
+                 for case_id, cycles, rate in CASE_RE.findall(log)]
         expected = len(WORKLOADS)
-        status = "PASS" if code == 0 and len(cases) == expected else "FAIL"
-        if stage == "latency_gate" and any(cycles > max_latency_cycles for cycles, _ in cases):
+        profiles = []
+        profile_error = None
+        try:
+            profiles = parse_profiles(log, {case_id: cycles for case_id, cycles, _ in cases})
+        except ValueError as exc:
+            profile_error = str(exc)
+        status = "PASS" if code == 0 and len(cases) == expected and profile_error is None else "FAIL"
+        if stage == "latency_gate" and any(cycles > max_latency_cycles for _, cycles, _ in cases):
             status = "FAIL"
-        total_cycles = sum(item[0] for item in cases)
+        total_cycles = sum(item[1] for item in cases)
         total_macs = sum(m * n * k for (m, n, k) in WORKLOADS[:len(cases)])
         artifact = run_dir / ("performance-summary.json" if stage == "performance"
                               else "latency-summary.json")
         summary = {"status": status, "seed": int(seed), "workloads": len(cases),
-                   "cycles": [item[0] for item in cases],
+                   "cycles": [item[1] for item in cases],
                    "macs_per_cycle": (total_macs / total_cycles if total_cycles else None),
-                   "max_latency_cycles": max_latency_cycles, "command_returncode": code}
+                   "max_latency_cycles": max_latency_cycles, "command_returncode": code,
+                   "profile_schema": "matrix_cycle_attribution_v1",
+                   "profiles": profiles,
+                   "attribution_totals": sum_profile_fields(profiles),
+                   "profile_validation_error": profile_error}
         write_json(artifact, summary)
         versions = sorted(set(TOOL_RE.findall(log)))
 
