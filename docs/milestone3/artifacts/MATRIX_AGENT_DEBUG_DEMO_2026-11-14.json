@@ -201,10 +201,11 @@
   },
   "status": "ANALYZED",
   "telemetry": {
-    "agent_calls": 3,
-    "elapsed_sec": 0.00235,
+    "agent_calls": null,
+    "elapsed_sec": 0.001112,
     "token_usage": null,
-    "tool_calls": 3
+    "tool_calls": null,
+    "workflow_component_calls": 3
   },
   "workflow": [
     "VCS_FAILURE",
