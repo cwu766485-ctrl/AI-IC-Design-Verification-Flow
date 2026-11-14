@@ -41,11 +41,12 @@ benchmark measured 2,029 aggregate cycles and 45.674 weighted useful MAC/cycle:
 | 16x32x32 | 417 | 39.290 |
 | 32x32x64 | 1187 | 55.211 |
 
-The large workload recorded 328 write-state cycles, 490 prefetch-wait cycles,
-208 arbiter-stall cycles, and 72 writeback-wait cycles. These are overlapping
-event/state counters and must not be summed as disjoint overhead. The benchmark
-reports workload cycles and useful MAC/cycle only. Its 250 MHz normalized GOPS
-field is not treated as measured ASIC frequency or throughput.
+The initial-stream large workload recorded 328 write-state cycles, 490
+prefetch-wait cycles, 208 arbiter-stall cycles, and 72 writeback-wait cycles.
+These historical event/state counters overlap and are superseded for cycle
+attribution by the aligned profile below. The benchmark reports workload
+cycles and useful MAC/cycle only. Its 250 MHz normalized GOPS field is not
+treated as measured ASIC frequency or throughput.
 
 RTL SHA-256 at the baseline revision:
 
@@ -116,6 +117,32 @@ candidates pass only the configured simulation gates; neither meets the 5%
 objective. The original Candidate 001 `REJECT` remains as historical evidence
 for the old test revision. Corrected decisions and raw log hashes are linked
 from the [phase-abort RCA](phase-abort-rca.md). No PPA or signoff claim follows.
+
+## Cycle Attribution Profile (2026-11-14)
+
+A later baseline-only Stage Runtime run added mutually exclusive per-cycle
+attribution inside `ST_PREFETCH_WAIT` and `ST_WRITE`. It passed regression,
+reference-model, latency-gate, and performance stages on VCS
+`V-2023.12-SP1_Full64`. Across five workloads, 777 of 2010 cycles were in
+prefetch wait: 123 primary request denials, 276 accepted request grants, 283
+outstanding-response drains, and 95 handoff-ready cycles; FIFO-full and
+no-request were zero. The 597 write-state cycles split into 468 productive
+writes and 129 writeback stalls, with no protection-error cycles.
+
+For `32x32x64`, 500/1189 cycles were in prefetch wait and 320/1189 in write.
+The 64 writeback stalls align with 64 line denial events. Request grants and
+response drains are state classifications, not necessarily avoidable stalls;
+the profile does not show whether response drain is hidden under MAC. It also
+does not cross-tab the waiting state with prefetch substate. The result does
+not support an outstanding-depth candidate (FIFO-full was zero) and is not
+enough to justify an A/B overlap candidate. The decision is to collect a
+`ST_PREFETCH_WAIT x prefetch_state` cross-tab before proposing RTL.
+
+The complete cycle table, category definitions, reproduction metadata, and
+limitations are recorded in
+[`matrix-cycle-attribution.md`](matrix-cycle-attribution.md); the NMAForge
+source and Stage Runtime evidence archive is referenced there. This run is a
+baseline profile, not a Candidate 001R2/002R2 comparison or an ASIC PPA result.
 
 ## Candidate 001
 

@@ -88,7 +88,10 @@ make -C dv/block/compute/matrix/sim matrix-pipeline-benchmark \
 
 The table below preserves the initial stimulus-stream measurements. The
 per-workload-aligned comparison in `simulation-performance-campaign.md`
-supersedes these values for candidate evaluation.
+supersedes these values for candidate evaluation. The later exclusive cycle
+attribution profile is summarized in
+[`matrix-cycle-attribution.md`](matrix-cycle-attribution.md); it is a
+baseline-only measurement and does not compare Candidate 001R2/002R2.
 
 The measured RTL simulation cycles and useful MAC/cycle were:
 
@@ -198,3 +201,10 @@ unblock ASIC optimization. Without an approved library/corner, reviewed SDC,
 formal/equivalence policy, and target-specific synthesis/STA setup, the ASIC
 controller must still return `STOP`. Once those inputs are supplied, no more
 than three isolated ASIC candidates can be evaluated through `rtl_ppa.py`.
+
+The 2026-11-14 cycle-attribution run is a separate, instrumentation-only
+baseline at NMAForge `4b62f8e`; no RTL candidate was evaluated. It records
+prefetch request grants, response drains, and output backpressure, but cannot
+show which drain cycles are exposed rather than hidden under MAC. Do not infer
+candidate performance from this profile. The next measurement is a prefetch
+state cross-tab or controlled response-latency sweep.

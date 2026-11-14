@@ -111,12 +111,15 @@ frequency, timing, or power measurement was performed.
 Full Stage Runtime evidence is retained at
 `/tmp/nmaforge_m3_rca_candidate002_campaign/MATRIX-CYCLE-002`, including
 `comparison.json`, `source_revision.json`, per-stage JSON/logs, and source
-manifest. The large baseline workload's profile recorded 328 write cycles,
-490 prefetch-wait cycles, 208 arbiter-stall cycles, and 72 writeback-wait
-cycles. These counters overlap and must not be summed as exclusive costs.
-This suggests further profiling should focus on prefetch/arbiter interaction
-and writeback acceptance, then isolate compute, prefetch, and writeback stalls
-with non-overlapping cycle attribution before proposing another RTL change.
+manifest. The large baseline workload's initial-stream profile recorded 328
+write cycles, 490 prefetch-wait cycles, 208 arbiter-stall cycles, and 72
+writeback-wait cycles. These historical counters overlap and must not be
+summed as exclusive costs. The later aligned baseline profile adds exclusive
+attribution within `ST_PREFETCH_WAIT` and `ST_WRITE`; see
+[`matrix-cycle-attribution.md`](matrix-cycle-attribution.md). That run is
+baseline-only and does not compare the corrected candidates. It still does not
+show whether prefetch drain is hidden under MAC, so the next step is a
+prefetch-state cross-tab, not an RTL candidate.
 
 ## Corrected Replay: Candidate 001R2 And Candidate 002R2
 

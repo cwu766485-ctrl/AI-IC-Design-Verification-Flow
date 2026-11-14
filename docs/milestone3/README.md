@@ -6,6 +6,11 @@ the aligned Candidate 001R2/002R2 simulation results in
 [`phase-abort-rca.md`](phase-abort-rca.md). The 0.25% cycle change is below the
 5% objective; no ASIC PPA or signoff is claimed.
 
+The later baseline-only cycle attribution profile separates Prefetch Wait and
+writeback cycles and does not justify an RTL candidate yet. See
+[`matrix-cycle-attribution.md`](matrix-cycle-attribution.md) for the results
+and the next measurement.
+
 This change adds `skills/rtl-ppa-optimization` and an adapter-driven evaluator
 for measured baselines and bounded RTL candidate patches. It does not replace
 the existing skills or create a new EDA tool adapter. Project commands supply
