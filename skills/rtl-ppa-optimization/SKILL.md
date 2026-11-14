@@ -123,3 +123,9 @@ The NMAForge Matrix readiness record is
 [`docs/milestone3/nmaforge-matrix-autonomous-optimization-readiness.md`](../../docs/milestone3/nmaforge-matrix-autonomous-optimization-readiness.md).
 Its ASIC PPA baseline remains blocked until approved target libraries and SDC,
 technology setup, and a candidate equivalence policy are available.
+
+For read-only assertion/protocol/FSM/waveform triage, profile-grounded
+architecture experiments, and budget-aware next-action selection, use
+[`references/optimization-readiness.md`](references/optimization-readiness.md)
+and `scripts/optimization_readiness.py`. These helpers consume evidence and
+never launch a competing runtime or change RTL.

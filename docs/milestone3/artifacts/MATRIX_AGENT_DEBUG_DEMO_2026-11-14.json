@@ -1,0 +1,216 @@
+{
+  "architecture_search": {
+    "baseline_metrics": {
+      "macs_per_cycle": 46.10547263681592,
+      "workload_cycles": 2010
+    },
+    "decision": "Do not create or evaluate an RTL patch until a directed measurement isolates exposed cycles and mandatory functional evidence is defined.",
+    "experiments": [
+      {
+        "candidate_ready": false,
+        "evidence": {
+          "aggregate_drain_cycles": 283,
+          "large_workload_prefetch_wait_cycles": 500,
+          "outstanding_drain_cycles": 180
+        },
+        "expected_impact": {
+          "area": "unmeasured",
+          "period": "unmeasured",
+          "throughput": "unmeasured",
+          "timing": "unmeasured",
+          "workload_cycles": "unmeasured; no larger than exposed drain, which this profile does not identify"
+        },
+        "feature_id": "MATRIX-PF-OVERLAP-EXP-001",
+        "functional_risks": [
+          "A/B response ownership and buffer-valid ordering",
+          "abort/reset while both operand streams are outstanding"
+        ],
+        "hypothesis": "Start B-group prefetch before all A-group responses drain, then retain buffer-valid gating until both operands are complete.",
+        "kind": "architecture_hypothesis",
+        "required_experiment": "Add ST_PREFETCH_WAIT x prefetch_state and MAC-overlap counters before an RTL patch.",
+        "source_revision": "4b62f8e815bb272ab9b727dff4736cec460e6f21",
+        "target": "ST_PREFETCH_WAIT outstanding response drain",
+        "validation": [
+          "directed prefetch response-order tests",
+          "three-seed regression",
+          "aligned cycle benchmark",
+          "formal/equivalence gate if required by the plan"
+        ]
+      },
+      {
+        "candidate_ready": false,
+        "evidence": {
+          "large_workload_line_denial_cycles": 64,
+          "large_workload_writeback_stall_cycles": 64
+        },
+        "expected_impact": {
+          "area": "additional storage/control expected; not synthesized",
+          "period": "unmeasured",
+          "throughput": "unmeasured",
+          "timing": "extra queue/mux path risk; not measured",
+          "workload_cycles": "unmeasured; up to observed writeback stall is only a ceiling, not a prediction"
+        },
+        "feature_id": "MATRIX-WRITE-ELASTIC-EXP-001",
+        "functional_risks": [
+          "write ordering and exactly-once commit",
+          "abort must preserve committed-prefix semantics",
+          "buffer-full backpressure must remain protocol stable"
+        ],
+        "hypothesis": "Evaluate a small ordered output staging buffer that lets internal tile work advance while line_ready is low.",
+        "kind": "architecture_hypothesis",
+        "required_experiment": "First prove there is independent work schedulable during writeback and measure buffer occupancy under controlled line_ready stalls.",
+        "source_revision": "4b62f8e815bb272ab9b727dff4736cec460e6f21",
+        "target": "ST_WRITE line-ready backpressure",
+        "validation": [
+          "directed line_ready stall and abort tests",
+          "scoreboard output-order check",
+          "three-seed regression",
+          "area/timing measurement when approved libraries and constraints are available"
+        ]
+      },
+      {
+        "candidate_ready": false,
+        "evidence": {
+          "aggregate_prefetch_wait_fifo_full_cycles": 0,
+          "large_workload_fifo_full_cycles": 0
+        },
+        "expected_impact": {
+          "area": "additional metadata/storage expected; not measured",
+          "period": "not measured",
+          "timing": "not measured",
+          "workload_cycles": "no supported improvement estimate"
+        },
+        "feature_id": "MATRIX-READ-DEPTH-EXP-REJECTED",
+        "functional_risks": [
+          "response metadata ordering and reset/abort drain"
+        ],
+        "hypothesis": "Increase read request FIFO/outstanding depth to reduce prefetch waiting.",
+        "kind": "rejected_hypothesis",
+        "rejection_reason": "FIFO-full attribution is zero in the measured profile.",
+        "required_experiment": "None until a workload demonstrates FIFO-full pressure.",
+        "source_revision": "4b62f8e815bb272ab9b727dff4736cec460e6f21",
+        "target": "Prefetch request FIFO pressure",
+        "validation": []
+      }
+    ],
+    "profile_schema": "matrix_cycle_attribution_v1",
+    "schema_version": 1,
+    "source_revision": "4b62f8e815bb272ab9b727dff4736cec460e6f21",
+    "status": "EXPERIMENTS_ONLY"
+  },
+  "decision": {
+    "action": "DEEP_REASONING",
+    "adaptive_action": "WAVEFORM_DEBUG",
+    "cost": {
+      "agent_calls": null,
+      "estimated_eda_seconds": null,
+      "estimated_tokens": null,
+      "remaining_eda_seconds": 0.0,
+      "remaining_tokens": null,
+      "token_reason": "No comparable agent/token telemetry was supplied.",
+      "token_usage": null
+    },
+    "evidence": [
+      "first divergence or mapped checker is missing; correlate assertion, protocol, FSM, and waveform evidence",
+      "real VCS log: /tmp/nmaforge_m3_candidate001_regression/run_seed_20261021.log",
+      "sha256=e78e248a9b0d76a73b1a33553907d8e08ef07b87df3c1fa3644dc286e2795069"
+    ],
+    "feature_id": "MATRIX-CYCLE-001",
+    "proposed_change": null,
+    "remaining_budget": {
+      "remaining_runtime_sec": 0
+    },
+    "required_validation_command": null,
+    "required_validation_stage": null,
+    "schema_version": 1,
+    "stage_cost_estimates_sec": {},
+    "testpoint_id": "MATRIX-PHASE-ABORT"
+  },
+  "failure_report": {
+    "checker_id": null,
+    "diagnosis_correct": true,
+    "event_count": 1,
+    "events": [
+      {
+        "checker_id": null,
+        "cycle": 46470000,
+        "failure": true,
+        "hierarchical_path": null,
+        "kind": "fatal",
+        "line_number": 73,
+        "message": "Fatal: \"../tb/tb_ai_tensor_matrix_core_random.sv\", 962: tb_ai_tensor_matrix_core_random.run_phase_abort: at time 46470000 ps",
+        "next_state": null,
+        "state": null,
+        "transaction_id": null
+      }
+    ],
+    "evidence": [
+      "real VCS log: /tmp/nmaforge_m3_candidate001_regression/run_seed_20261021.log",
+      "sha256=e78e248a9b0d76a73b1a33553907d8e08ef07b87df3c1fa3644dc286e2795069"
+    ],
+    "feature_id": "MATRIX-CYCLE-001",
+    "first_failure_cycle": 22,
+    "hierarchy_context": [],
+    "hierarchy_paths": [],
+    "known_fault": "Candidate 001 skipped terminal ST_DONE reachability; testbench expected state 11",
+    "observed_signals": {
+      "baseline": {
+        "abort": 0,
+        "busy": 1,
+        "done": 0,
+        "state": "ST_DONE",
+        "state_code": 11
+      },
+      "candidate": {
+        "abort": 0,
+        "busy": 0,
+        "done": 1,
+        "state": "IDLE",
+        "state_code": 0
+      }
+    },
+    "reproducible_seed": 20261021,
+    "requested_signal_paths": [],
+    "root_cause_hypothesis": "Candidate skipped externally expected ST_DONE reachability; done asserted while abort remained low.",
+    "same_transaction_events": [],
+    "schema_version": 1,
+    "source_revision": "4b62f8e815bb272ab9b727dff4736cec460e6f21",
+    "status": "ANALYZED",
+    "testpoint_id": "MATRIX-PHASE-ABORT",
+    "transaction_id": null,
+    "verdi_query_plan": {
+      "context_cycles": 4,
+      "failure_cycle": 22,
+      "signals": [],
+      "status": "NEEDS_SIGNAL_PATHS",
+      "viewer": "Verdi launch remains provided by the EDA debug-artifact stage; this report does not claim Verdi executed."
+    },
+    "waveform_status": "NOT_PROVIDED"
+  },
+  "limitations": [
+    "Verdi was not invoked by this read-only runner.",
+    "Architecture sensitivity variants require controlled DUT knobs.",
+    "ASIC PPA remains blocked without approved libraries and SDC."
+  ],
+  "schema_version": 1,
+  "source": {
+    "log": "/tmp/nmaforge_m3_candidate001_regression/run_seed_20261021.log",
+    "log_sha256": "e78e248a9b0d76a73b1a33553907d8e08ef07b87df3c1fa3644dc286e2795069",
+    "seed": 20261021,
+    "source_revision": "4b62f8e815bb272ab9b727dff4736cec460e6f21"
+  },
+  "status": "ANALYZED",
+  "telemetry": {
+    "agent_calls": 3,
+    "elapsed_sec": 0.00235,
+    "token_usage": null,
+    "tool_calls": 3
+  },
+  "workflow": [
+    "VCS_FAILURE",
+    "STRUCTURED_FAILURE_REPORT",
+    "SIGNAL_FSM_DEPENDENCY_TRACE",
+    "ROOT_CAUSE_HYPOTHESIS",
+    "DIRECTED_REPLAY"
+  ]
+}

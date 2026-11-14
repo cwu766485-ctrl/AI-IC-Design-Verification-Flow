@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "status": "NOT_COMPARABLE",
+  "task_id": "MATRIX-PHASE-ABORT-20261021",
+  "source_revision": "4b62f8e815bb272ab9b727dff4736cec460e6f21",
+  "gates": ["VCS regression", "first-divergence preservation", "root-cause evidence"],
+  "approaches": {
+    "A_NATIVE_CODEX_DIRECT_SHELL": {"success": null, "token_usage": null, "eda_runtime_sec": null},
+    "B_CODEX_FIXED_EDA_WORKFLOW": {"success": null, "token_usage": null, "eda_runtime_sec": null},
+    "C_AI_IC_FLOW": {"success": true, "token_usage": null, "eda_runtime_sec": 0.001696, "stage_runtime_baseline_sec": 14.430263}
+  },
+  "missing_evidence": [
+    "Matched A/B runs with identical source, seed, command and gates",
+    "Token telemetry for all approaches",
+    "Comparable wall-clock and EDA runtime boundaries"
+  ],
+  "decision": "No performance or token-efficiency claim is made until all three approaches have matched telemetry."
+}
