@@ -129,3 +129,14 @@ architecture experiments, and budget-aware next-action selection, use
 [`references/optimization-readiness.md`](references/optimization-readiness.md)
 and `scripts/optimization_readiness.py`. These helpers consume evidence and
 never launch a competing runtime or change RTL.
+
+## Blind debug evaluation
+
+[`scripts/blind_debug_benchmark.py`](scripts/blind_debug_benchmark.py) packages
+only a design specification, ordered RTL files, seed, and VCS log for a fresh
+debugging session. It stores the answer key outside the challenge directory and
+scores a frozen structured response separately. It does not invoke an AI
+agent, validate an RTL patch, or run regression. The evidence workflow only
+parses logs and emits a deterministic next-action policy; it does not produce
+or score a root-cause diagnosis. Keep proprietary design inputs and answer
+keys outside this public repository.

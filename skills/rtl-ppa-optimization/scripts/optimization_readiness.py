@@ -12,7 +12,8 @@ from pathlib import Path
 
 TRACE_RE = re.compile(r"\b(ASSERT(?:ION)?_FAIL|UVM_ERROR|FATAL|PROTOCOL_TRACE|AXI_TRACE|TRANSACTION_TRACE|FSM_TRACE|WAVE_EVENT)\b", re.I)
 KV_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_.:/-]*)=([^\s,]+)")
-CYCLE_RE = re.compile(r"\b(?:cycle|cyc|time)\s*[=: ]\s*(\d+)\b", re.I)
+CYCLE_RE = re.compile(r"\b(?:cycle|cyc)\s*[=: ]\s*(\d+)\b", re.I)
+TIME_RE = re.compile(r"\btime\s*[=: ]\s*(\d+)\b", re.I)
 FAIL_RE = re.compile(r"assert|uvm_error|fatal|protocol.*(?:fail|error)|scoreboard.*(?:fail|error)|^\s*Error(?:[-:]|\s)", re.I)
 
 
@@ -50,13 +51,16 @@ class HierarchyAwareDebugger:
                 continue
             fields = {key: value.strip('"\'') for key, value in KV_RE.findall(line)}
             cycle_match = CYCLE_RE.search(line)
+            time_match = TIME_RE.search(line)
             cycle = int(fields["cycle"]) if fields.get("cycle", "").isdigit() else (
                 int(cycle_match.group(1)) if cycle_match else None)
+            timestamp = (int(fields["time"]) if fields.get("time", "").isdigit() else
+                         int(time_match.group(1)) if time_match else None)
             kind = match.group(1).lower() if match else "failure"
             failure = bool(FAIL_RE.search(line))
             if failure and cycle is not None:
                 failure_cycles.append(cycle)
-            events.append({"kind": kind, "cycle": cycle,
+            events.append({"kind": kind, "cycle": cycle, "timestamp": timestamp,
                            "transaction_id": fields.get("transaction_id", fields.get("txn")),
                            "hierarchical_path": fields.get("path", fields.get("signal")),
                            "state": fields.get("state"), "next_state": fields.get("next"),
@@ -419,37 +423,19 @@ class CostAwareDecisionEngine:
         }
 
 
-class AgentWorkflowRunner:
-    """Run the three readiness components on real, archived evidence."""
+class EvidenceWorkflowRunner:
+    """Collect deterministic evidence; this class does not diagnose RTL."""
 
     def run(self, log_path, output_path, *, seed, source_revision,
-            known_fault=None, first_divergence_cycle=None, baseline_state=None,
-            candidate_state=None, profile_path=None, budget=None, signals=()):
+            profile_path=None, budget=None, signals=()):
         started = time.monotonic()
         log = Path(log_path).read_text(errors="replace")
         log_sha = hashlib.sha256(log.encode()).hexdigest()
         failure = HierarchyAwareDebugger().analyze(log, signals)
-        # The VCS fatal line carries simulator time, while the operation-local
-        # first divergence is preserved in the reviewed RCA evidence.
-        if first_divergence_cycle is not None:
-            failure["first_failure_cycle"] = first_divergence_cycle
-            failure["verdi_query_plan"]["failure_cycle"] = first_divergence_cycle
-        failure.update({"feature_id": "MATRIX-CYCLE-001",
-                        "testpoint_id": "MATRIX-PHASE-ABORT",
-                        "reproducible_seed": seed,
+        failure.update({"reproducible_seed": seed,
                         "source_revision": source_revision,
                         "evidence": ["real VCS log: " + str(log_path),
                                      "sha256=" + log_sha]})
-        if baseline_state is not None and candidate_state is not None:
-            failure["observed_signals"] = {"baseline": baseline_state,
-                                            "candidate": candidate_state}
-            failure["known_fault"] = known_fault
-            failure["root_cause_hypothesis"] = (
-                "Candidate skipped externally expected ST_DONE reachability; "
-                "done asserted while abort remained low.")
-            failure["diagnosis_correct"] = bool(known_fault and
-                "ST_DONE" in str(known_fault) and
-                candidate_state.get("state") == "IDLE")
         search = None
         if profile_path:
             search = ArchitectureSearch().propose(_read_json(profile_path), source_revision)
@@ -458,25 +444,29 @@ class AgentWorkflowRunner:
             commands={"DIRECTED_TEST": ["replay", str(log_path)]})
         result = {
             "schema_version": 1,
-            "status": "ANALYZED" if failure.get("diagnosis_correct") else failure.get("status"),
+            "status": "EVIDENCE_COLLECTED" if failure.get("event_count") else failure.get("status"),
             "workflow": ["VCS_FAILURE", "STRUCTURED_FAILURE_REPORT",
-                          "SIGNAL_FSM_DEPENDENCY_TRACE", "ROOT_CAUSE_HYPOTHESIS",
-                          "DIRECTED_REPLAY"],
+                          "DETERMINISTIC_NEXT_ACTION_POLICY"],
             "source": {"log": str(log_path), "log_sha256": log_sha,
                         "source_revision": source_revision, "seed": seed},
             "failure_report": failure,
             "architecture_search": search,
             "decision": decision,
             "telemetry": {"agent_calls": None, "tool_calls": None,
-                           "workflow_component_calls": 3,
+                           "policy_evaluations": 1,
                            "elapsed_sec": round(time.monotonic() - started, 6),
                            "token_usage": None},
             "limitations": ["Verdi was not invoked by this read-only runner.",
+                            "No independent agent diagnosis, RTL patch, or regression was run.",
                             "Architecture sensitivity variants require controlled DUT knobs.",
                             "ASIC PPA remains blocked without approved libraries and SDC."],
         }
         _write_json(output_path, result)
         return result
+
+
+class AgentWorkflowRunner(EvidenceWorkflowRunner):
+    """Compatibility alias for older callers; performs evidence capture only."""
 
 
 def _write_json(path, value):
@@ -506,15 +496,11 @@ def main(argv=None):
     cost.add_argument("--telemetry")
     cost.add_argument("--codex-baseline")
     cost.add_argument("--output", required=True)
-    workflow = commands.add_parser("validate")
+    workflow = commands.add_parser("capture", aliases=["validate"],
+                                   help="collect evidence without asserting a root cause")
     workflow.add_argument("--log", required=True)
     workflow.add_argument("--seed", type=int, required=True)
     workflow.add_argument("--source-revision", required=True)
-    workflow.add_argument("--known-fault", required=True)
-    workflow.add_argument("--first-divergence-cycle", type=int, required=True)
-    workflow.add_argument("--baseline-state", required=True,
-                          help="JSON object, e.g. '{\"state\":\"ST_DONE\",\"done\":0}'")
-    workflow.add_argument("--candidate-state", required=True)
     workflow.add_argument("--profile")
     workflow.add_argument("--output", required=True)
     args = parser.parse_args(argv)
@@ -537,16 +523,14 @@ def main(argv=None):
             result["efficiency_comparison"] = engine.compare_efficiency(
                 (telemetry or {}).get("tasks", []),
                 _read_json(args.codex_baseline).get("tasks", []))
-    else:
-        result = AgentWorkflowRunner().run(
+    elif args.command in ("capture", "validate"):
+        result = EvidenceWorkflowRunner().run(
             args.log, args.output, seed=args.seed,
-            source_revision=args.source_revision, known_fault=args.known_fault,
-            first_divergence_cycle=args.first_divergence_cycle,
-            baseline_state=json.loads(args.baseline_state),
-            candidate_state=json.loads(args.candidate_state),
-            profile_path=args.profile)
+            source_revision=args.source_revision, profile_path=args.profile)
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
+    else:
+        raise ValueError("unsupported command: " + str(args.command))
     _write_json(args.output, result)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
