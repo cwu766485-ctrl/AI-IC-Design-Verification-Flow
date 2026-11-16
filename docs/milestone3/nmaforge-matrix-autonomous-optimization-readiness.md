@@ -231,7 +231,9 @@ separate from operation-local cycles.
 
 The blind challenge packager and separate-key scorer are documented in
 [`docs/milestone4/blind-debug-benchmark.md`](../milestone4/blind-debug-benchmark.md).
-The first fresh-session diagnosis and patch/regression replay remain pending.
+The packaged candidate patch now passes a licensed three-seed VCS replay. A
+fresh-session diagnosis and score remain pending; this session is not an
+independent blind result.
 
 The controller exposes normalized actions `STATIC_ANALYSIS`,
 `TARGETED_SIMULATION`, `WAVEFORM_DEBUG`, `FULL_REGRESSION`,
@@ -239,17 +241,29 @@ The controller exposes normalized actions `STATIC_ANALYSIS`,
 PPA action field for CLI compatibility. ASIC requests still return `STOP`
 without approved libraries, SDC, and equivalence policy.
 
-The requested bank-ready, response-latency, prefetch cross-state, and
-writeback sensitivity measurements are blocked because the archived benchmark
-does not expose ready/latency sweeps as controlled run parameters. The
-testbench's internal force flags are used by directed tests, not by a
-reproducible sensitivity matrix. The exact baseline and blockers are in
-[`MATRIX_ARCHITECTURE_SENSITIVITY_2026-11-14.json`](artifacts/MATRIX_ARCHITECTURE_SENSITIVITY_2026-11-14.json).
-No RTL candidate is generated from attribution alone. The three-way execution
-comparison remains `NOT_COMPARABLE` because matched A/B telemetry and token
-usage are absent; this is recorded in
-[`AGENT_EXECUTION_COMPARISON_2026-11-14.json`](artifacts/AGENT_EXECUTION_COMPARISON_2026-11-14.json).
+The initial sensitivity assessment was blocked because the archived benchmark
+had no sweepable ready/latency controls; that blocker is resolved for an
+isolated testbench-only experiment. The experiment modified no RTL or NMAForge
+worktree file. Nine conditions were run on the same candidate snapshot with
+VCS `V-2023.12-SP1_Full64`; all five workloads passed their functional
+reference checks in each condition. A separate default-mode regression passed
+three seeds, 18 cases, 35 fault checks, and six phase-abort checks per seed.
+The aggregate record and source/log hashes are in
+[`MATRIX_ARCHITECTURE_SENSITIVITY_2026-11-16.json`](artifacts/MATRIX_ARCHITECTURE_SENSITIVITY_2026-11-16.json).
 
-Current validation is recorded on the active M4/R1 pull requests. Python tests
-validate the workflow and evidence contracts only; they do not constitute an
-independent blind diagnosis, ASIC signoff, or a measured PPA improvement.
+For the 32x32x64 workload, the seeded-random behavioral baseline took 1217
+cycles, including 160 bank-ready stalls and 79 output-ready stalls. The
+idealized 100%-ready, one-cycle-response control took 978 cycles. Controlled
+bank readiness at 75% and 50% took 1087 and 1297 cycles; fixed extra response
+delays of 1, 3, and 6 cycles took 1074, 1266, and 1554 cycles; output readiness
+at 75% and 50% took 1063 and 1230 cycles. These are deterministic testbench
+sensitivity results, not characterized system performance. Detailed counters
+can overlap and must not be added as exclusive costs. The simulator returned
+exit code 0 for a deliberately invalid `$fatal` configuration, so consumers
+must also require the success marker and reject fatal diagnostics.
+
+This experiment does not measure area, setup timing, power, or ASIC PPA and
+does not justify an RTL candidate by itself. The fresh-session blind diagnosis
+and score remain pending. The three-way execution comparison remains
+`NOT_COMPARABLE` because matched A/B telemetry and token usage are absent; this
+is recorded in [`AGENT_EXECUTION_COMPARISON_2026-11-14.json`](artifacts/AGENT_EXECUTION_COMPARISON_2026-11-14.json).
