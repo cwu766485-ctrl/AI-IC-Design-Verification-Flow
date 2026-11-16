@@ -3,12 +3,16 @@
 ## Current status
 
 The benchmark packager and scorer are implemented. A real independent blind
-diagnosis is **BLOCKED** on this host: VCS `V-2023.12-SP1_Full64` starts, but
-the current license-server connection fails before compilation. The interrupted
-run used an isolated archive of NMAForge revision
-`409c3a9fd647d4f8c4c881c9bfdaf5d93b7076ee`; it did not write into the source
-repository. No diagnosis, patch, or regression result is claimed for this
-attempt.
+diagnosis is still **PENDING**; license availability no longer blocks VCS.
+After the license was restored, VCS `V-2023.12-SP1_Full64` compiled the isolated
+challenge snapshot at source revision
+`4b62f8e815bb272ab9b727dff4736cec460e6f21+candidate001-patch-b48b0c97e6e94b365cb1393b72eb6308ae5908f9f5ebff1e8a2baa57c59a8eaf`.
+Seeds `20261021`, `20261022`, and `20261023` each exited successfully and
+reported `MATRIX_CORE_RANDOM_PASS` with 18 cases, 35 fault checks, and all six
+phase-abort checks. This was a licensed functional regression of the packaged
+candidate, not a fresh blind diagnosis. The compile did not enable coverage
+instrumentation, so it provides no new URG or coverage result. The snapshot and
+logs remained under `/tmp`; the original NMAForge worktree was not modified.
 
 The revised evidence collector was also replayed read-only on the previously
 archived seed `20261021` log (SHA-256
