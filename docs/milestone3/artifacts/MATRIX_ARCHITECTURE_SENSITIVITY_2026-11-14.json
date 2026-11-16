@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "status": "BLOCKED",
+  "source_revision": "4b62f8e815bb272ab9b727dff4736cec460e6f21",
+  "baseline_profile": "MATRIX_CYCLE_ATTRIBUTION_2026-11-14/performance-summary.json",
+  "requested_measurements": [
+    "prefetch_fsm_cross_state_counters",
+    "request_response_overlap",
+    "bank_ready_sensitivity",
+    "response_latency_sensitivity",
+    "writeback_backpressure_sensitivity"
+  ],
+  "observed_baseline": {
+    "workload": "32x32x64",
+    "cycles": 1189,
+    "prefetch_wait": 500,
+    "prefetch_wait_denial": 77,
+    "prefetch_wait_outstanding_drain": 180,
+    "writeback_stall": 64,
+    "line_denial": 64,
+    "fifo_full": 0
+  },
+  "blockers": [
+    "The archived benchmark exposes attribution counters but no controlled bank-ready or response-latency knobs.",
+    "The available testbench readiness signals are randomized, so rerunning the same seed is not a sensitivity experiment.",
+    "No approved RTL mutation or isolated parameterized snapshot was authorized for this report."
+  ],
+  "decision": "Do not generate an RTL candidate from attribution alone. Add controlled, reviewable readiness/latency parameters in an isolated NMAForge snapshot, then rerun the same source revision and gates."
+}
