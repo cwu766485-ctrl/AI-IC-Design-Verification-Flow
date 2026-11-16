@@ -7,9 +7,11 @@ the aligned Candidate 001R2/002R2 simulation results in
 5% objective; no ASIC PPA or signoff is claimed.
 
 The later baseline-only cycle attribution profile separates Prefetch Wait and
-writeback cycles and does not justify an RTL candidate yet. See
-[`matrix-cycle-attribution.md`](matrix-cycle-attribution.md) for the results
-and the next measurement.
+writeback cycles. A testbench-only controlled readiness/response sensitivity
+replay now quantifies those effects on the behavioral model; it still does not
+justify an RTL candidate or establish ASIC PPA. See
+[`matrix-cycle-attribution.md`](matrix-cycle-attribution.md) and the
+[2026-11-16 sensitivity record](artifacts/MATRIX_ARCHITECTURE_SENSITIVITY_2026-11-16.json).
 
 This change adds `skills/rtl-ppa-optimization` and an adapter-driven evaluator
 for measured baselines and bounded RTL candidate patches. It does not replace
