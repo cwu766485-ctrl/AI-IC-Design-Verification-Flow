@@ -14,7 +14,9 @@ SPEC.loader.exec_module(benchmark)
 def fixture_tree(tmp_path):
     rtl_root = tmp_path / "rtl"
     (rtl_root / "compute").mkdir(parents=True)
+    (rtl_root / "tb").mkdir()
     (rtl_root / "compute/core.sv").write_text("module core; endmodule\n")
+    (rtl_root / "tb/core_tb.sv").write_text("module core_tb; endmodule\n")
     spec = tmp_path / "design.md"
     spec.write_text("The core returns one response per accepted request.\n")
     log = tmp_path / "vcs.log"
@@ -38,14 +40,14 @@ def test_challenge_inputs_exclude_separate_answer_key_and_hash_every_input(tmp_p
     answer_path = tmp_path / "private" / "answer.json"
     result = benchmark.prepare_challenge(
         spec, rtl_root, ["compute/core.sv"], log, 44, "source-sha",
-        destination, answer_path)
+        destination, answer_path, testbench_paths=["tb/core_tb.sv"])
     benchmark.write_answer_key(answer_path, result["challenge_id"], expected)
 
     manifest = json.loads((destination / "input/challenge.json").read_text())
     assert result["status"] == "PREPARED"
     assert manifest["seed"] == 44
     assert [item["role"] for item in manifest["inputs"]] == [
-        "design_spec", "rtl_source", "vcs_log"]
+        "design_spec", "rtl_source", "testbench_source", "vcs_log"]
     assert all(len(item["sha256"]) == 64 for item in manifest["inputs"])
     package_text = "\n".join(path.read_text(errors="replace")
                               for path in (destination / "input").rglob("*") if path.is_file())

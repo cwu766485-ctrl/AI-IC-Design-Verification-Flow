@@ -66,7 +66,8 @@ def _validate_expected(expected):
 
 
 def prepare_challenge(spec_path, rtl_root, rtl_paths, log_path, seed,
-                      source_revision, destination, answer_key_path):
+                      source_revision, destination, answer_key_path,
+                      testbench_paths=()):
     spec_path = Path(spec_path).resolve()
     rtl_root = Path(rtl_root).resolve()
     log_path = Path(log_path).resolve()
@@ -84,14 +85,15 @@ def prepare_challenge(spec_path, rtl_root, rtl_paths, log_path, seed,
         raise BenchmarkInputError("answer key output already exists")
 
     source_files = []
-    for raw_path in rtl_paths:
-        relative = Path(raw_path)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise BenchmarkInputError("RTL paths must be relative to rtl_root")
-        source = (rtl_root / relative).resolve()
-        if not _is_below(source, rtl_root) or not source.is_file():
-            raise BenchmarkInputError("RTL source is missing or escapes rtl_root: " + str(raw_path))
-        source_files.append((relative.as_posix(), source))
+    for role, raw_paths in (("rtl_source", rtl_paths), ("testbench_source", testbench_paths)):
+        for raw_path in raw_paths:
+            relative = Path(raw_path)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise BenchmarkInputError("source paths must be relative to rtl_root")
+            source = (rtl_root / relative).resolve()
+            if not _is_below(source, rtl_root) or not source.is_file():
+                raise BenchmarkInputError("source is missing or escapes rtl_root: " + str(raw_path))
+            source_files.append((role, relative.as_posix(), source))
     if not source_files:
         raise BenchmarkInputError("at least one ordered RTL source is required")
 
@@ -105,11 +107,12 @@ def prepare_challenge(spec_path, rtl_root, rtl_paths, log_path, seed,
     entries.append({"role": "design_spec", "path": "input/design_spec.md",
                     "sha256": _sha256(spec_target)})
 
-    for relative, source in source_files:
-        target = destination / "input" / "rtl" / relative
+    for role, relative, source in source_files:
+        directory = "testbench" if role == "testbench_source" else "rtl"
+        target = destination / "input" / directory / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
-        entries.append({"role": "rtl_source", "path": "input/rtl/" + relative,
+        entries.append({"role": role, "path": "input/" + directory + "/" + relative,
                         "sha256": _sha256(target)})
 
     log_target = destination / "input" / "evidence" / "vcs.log"
@@ -133,7 +136,7 @@ def prepare_challenge(spec_path, rtl_root, rtl_paths, log_path, seed,
     _write_json(destination / "input" / "challenge.json", manifest)
     (destination / "input" / "AGENT_TASK.md").write_text(
         "# Blind RTL Debug Task\n\n"
-        "Use only the design specification, ordered RTL files, failed seed, and VCS log in this directory.\n"
+        "Use only the design specification, ordered DUT RTL and testbench sources, failed seed, and VCS log in this directory.\n"
         "Do not request or infer hidden scoring data. Provide a structured root cause, the smallest safe patch plan, and the regression needed to validate it.\n"
         "Write `diagnosis.json` using the `response_contract` in `challenge.json`.\n"
     )
@@ -179,7 +182,9 @@ def main(argv=None):
     prepare.add_argument("--spec", required=True)
     prepare.add_argument("--rtl-root", required=True)
     prepare.add_argument("--rtl", action="append", required=True,
-                         help="ordered path relative to --rtl-root; repeat for each source")
+                         help="ordered DUT RTL path relative to --rtl-root; repeat for each source")
+    prepare.add_argument("--testbench", action="append", default=[],
+                         help="relevant testbench path relative to --rtl-root; repeat as needed")
     prepare.add_argument("--log", required=True)
     prepare.add_argument("--seed", type=int, required=True)
     prepare.add_argument("--source-revision", required=True)
@@ -202,7 +207,8 @@ def main(argv=None):
         _validate_expected(expected)
         result = prepare_challenge(args.spec, args.rtl_root, args.rtl, args.log,
                                    args.seed, args.source_revision,
-                                   args.destination, args.answer_key_output)
+                                   args.destination, args.answer_key_output,
+                                   args.testbench)
         write_answer_key(args.answer_key_output, result["challenge_id"], expected)
     else:
         result = score_response(args.answer_key, args.prediction)

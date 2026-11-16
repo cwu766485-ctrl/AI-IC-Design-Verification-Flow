@@ -18,6 +18,15 @@ revision `4b62f8e815bb272ab9b727dff4736cec460e6f21`). It returned
 simulator timestamp `46470000 ps`. This validates evidence parsing only; the
 report explicitly records that no agent diagnosis, patch, or regression ran.
 
+Challenge `4d9007d5165a4fd898fe175f72366862` is prepared locally. It contains
+the behavior-spec excerpt, three ordered DUT RTL files, the relevant
+testbench, and the raw seed log. The challenge manifest pins the source to
+NMAForge `4b62f8e` plus the candidate patch hash. The challenge and answer key
+are outside both Git worktrees; the answer key was created separately with
+mode `0600`. This packet
+has **not** been sent to a fresh independent session or scored, so no blind
+accuracy result exists yet.
+
 The archived `MATRIX_AGENT_DEBUG_DEMO_2026-11-14.json` is historical evidence,
 not a blind benchmark: it contains `known_fault`, manually supplied signal
 states, and a diagnosis correctness field derived from those inputs. The
@@ -30,13 +39,17 @@ VCS simulator timestamps are recorded separately from operation-local cycles.
 Each challenge input contains only:
 
 - The design behavior specification.
-- Ordered RTL source files from one pinned source revision.
+- Ordered DUT RTL and relevant testbench source files from one pinned source
+  revision.
 - The failed seed and raw VCS log.
 - File hashes and a neutral challenge identifier.
 
 The answer key is created outside the challenge directory with mode `0600`.
-Never share the key or its source with the debugging session. Freeze the
-agent's structured response before invoking the scorer. Run the candidate
+Never share the key or its source with the debugging session. The Flow repo
+contains the historical failure explanation and candidate patch, so a fresh
+blind session must not be opened with this repository or this conversation as
+its context. Give it only a copy of the challenge `input/` directory. Freeze
+the agent's structured response before invoking the scorer. Run the candidate
 patch and required regression separately; a correct explanation alone does
 not pass the debug task.
 
@@ -52,6 +65,7 @@ python3 skills/rtl-ppa-optimization/scripts/blind_debug_benchmark.py prepare \
   --rtl rtl/compute/matrix/ai_tensor_matrix_core.v \
   --rtl rtl/compute/matrix/ai_tensor_matrix_array.sv \
   --rtl rtl/compute/matrix/ai_tensor_matrix_datapath.v \
+  --testbench dv/block/compute/matrix/tb/tb_ai_tensor_matrix_core_random.sv \
   --log /tmp/matrix-challenge/evidence/run_seed_1.log \
   --seed 1 --source-revision <source-sha> \
   --destination /tmp/blind-debug-001 \
