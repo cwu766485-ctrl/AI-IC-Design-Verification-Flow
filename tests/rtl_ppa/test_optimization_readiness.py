@@ -50,6 +50,15 @@ def test_hierarchy_debug_does_not_invent_waveform_or_first_failure():
     assert result["waveform_status"] == "NOT_PROVIDED"
 
 
+def test_vcs_simulator_time_is_not_misreported_as_an_operation_cycle():
+    result = readiness.HierarchyAwareDebugger().analyze(
+        'Fatal: "tb.sv", 42: failure at time 46470000 ps\n')
+
+    assert result["first_failure_cycle"] is None
+    assert result["events"][0]["cycle"] is None
+    assert result["events"][0]["timestamp"] == 46470000
+
+
 def test_hierarchy_debug_requires_signal_selection_before_reading_vcd():
     result = readiness.HierarchyAwareDebugger().analyze(
         "ASSERTION_FAIL cycle=0 checker=CK-0", vcd_text="$enddefinitions $end\n#0\n1!\n")
@@ -183,21 +192,25 @@ def test_cost_engine_exposes_normalized_adaptive_actions_without_breaking_legacy
     assert blocked["adaptive_action"] == "STOP"
 
 
-def test_real_workflow_runner_preserves_log_hash_and_diagnosis(tmp_path):
+def test_evidence_workflow_does_not_claim_an_agent_diagnosis(tmp_path):
     log = tmp_path / "candidate.log"
     output = tmp_path / "workflow.json"
-    log.write_text("Fatal: phase abort target state=11 not reached current=0 done=1\n")
-    result = readiness.AgentWorkflowRunner().run(
-        log, output, seed=20261021, source_revision="4b62f8e8",
-        known_fault="Candidate skipped terminal ST_DONE",
-        first_divergence_cycle=22,
-        baseline_state={"state": "ST_DONE", "done": 0, "abort": 0},
-        candidate_state={"state": "IDLE", "done": 1, "abort": 0})
-    assert result["status"] == "ANALYZED"
-    assert result["failure_report"]["diagnosis_correct"] is True
+    log.write_text("Fatal: phase abort target state=11 not reached current=0 done=1 at time 46470000 ps\n")
+    result = readiness.EvidenceWorkflowRunner().run(
+        log, output, seed=20261021, source_revision="4b62f8e8")
+    assert result["status"] == "EVIDENCE_COLLECTED"
     assert result["source"]["seed"] == 20261021
     assert len(result["source"]["log_sha256"]) == 64
-    assert json.loads(output.read_text())["workflow"][-1] == "DIRECTED_REPLAY"
+    assert result["failure_report"]["first_failure_cycle"] is None
+    assert result["failure_report"]["events"][0]["timestamp"] == 46470000
+    serialized = output.read_text()
+    assert "known_fault" not in serialized
+    assert "diagnosis_correct" not in serialized
+    assert "root_cause_hypothesis" not in serialized
+    assert result["workflow"] == ["VCS_FAILURE", "STRUCTURED_FAILURE_REPORT",
+                                  "DETERMINISTIC_NEXT_ACTION_POLICY"]
+    assert result["telemetry"]["agent_calls"] is None
+    assert any("No independent agent diagnosis" in item for item in result["limitations"])
 
 
 def test_cli_search_writes_machine_readable_report(tmp_path):

@@ -218,16 +218,20 @@ replace Stage Runtime or create RTL patches. The current Matrix profile keeps
 all optimization hypotheses unready until exposed cycles are measured;
 agent/token cost remains unknown without comparable telemetry.
 
-## Agent Intelligence Validation (2026-11-14)
+## Debug Evidence and Blind-Benchmark Status
 
-The real Candidate 001 VCS failure is now exercised through the readiness
-workflow runner. [`MATRIX_AGENT_DEBUG_DEMO_2026-11-14.json`](artifacts/MATRIX_AGENT_DEBUG_DEMO_2026-11-14.json)
-records the source revision, seed `20261021`, original log SHA-256, archived
-first divergence at operation-local cycle 22, and the baseline/candidate
-signals. The diagnosis is correct: Candidate 001 skipped the internally
-expected `ST_DONE` reachability and asserted `done` in `IDLE` while `abort` was
-low. The assertion and scoreboard were not changed, and Verdi was not claimed
-as executed.
+The archived [`MATRIX_AGENT_DEBUG_DEMO_2026-11-14.json`](artifacts/MATRIX_AGENT_DEBUG_DEMO_2026-11-14.json)
+is a retrospective deterministic fixture, not an independent agent result. It
+contains `known_fault`, manually supplied baseline/candidate signal values, and
+a `diagnosis_correct` field derived from those inputs. It must not be used as
+blind-debug accuracy evidence. The updated `EvidenceWorkflowRunner` only
+collects parsed log evidence and a deterministic next-action recommendation;
+it does not supply or validate a root cause. VCS simulator timestamps are kept
+separate from operation-local cycles.
+
+The blind challenge packager and separate-key scorer are documented in
+[`docs/milestone4/blind-debug-benchmark.md`](../milestone4/blind-debug-benchmark.md).
+The first fresh-session diagnosis and patch/regression replay remain pending.
 
 The controller exposes normalized actions `STATIC_ANALYSIS`,
 `TARGETED_SIMULATION`, `WAVEFORM_DEBUG`, `FULL_REGRESSION`,
@@ -236,16 +240,16 @@ PPA action field for CLI compatibility. ASIC requests still return `STOP`
 without approved libraries, SDC, and equivalence policy.
 
 The requested bank-ready, response-latency, prefetch cross-state, and
-writeback sensitivity measurements are explicitly blocked because the archived
-testbench has randomized readiness and no controlled latency knobs. The exact
-baseline and blockers are in
+writeback sensitivity measurements are blocked because the archived benchmark
+does not expose ready/latency sweeps as controlled run parameters. The
+testbench's internal force flags are used by directed tests, not by a
+reproducible sensitivity matrix. The exact baseline and blockers are in
 [`MATRIX_ARCHITECTURE_SENSITIVITY_2026-11-14.json`](artifacts/MATRIX_ARCHITECTURE_SENSITIVITY_2026-11-14.json).
 No RTL candidate is generated from attribution alone. The three-way execution
 comparison remains `NOT_COMPARABLE` because matched A/B telemetry and token
 usage are absent; this is recorded in
 [`AGENT_EXECUTION_COMPARISON_2026-11-14.json`](artifacts/AGENT_EXECUTION_COMPARISON_2026-11-14.json).
 
-Current validation: 118 Python tests pass, including 11 focused readiness
-tests and 61 `tests/rtl_ppa` tests. These results validate the workflow and
-decision contracts only; they do not constitute ASIC signoff or a measured
-PPA improvement.
+Current validation is recorded on the active M4/R1 pull requests. Python tests
+validate the workflow and evidence contracts only; they do not constitute an
+independent blind diagnosis, ASIC signoff, or a measured PPA improvement.
